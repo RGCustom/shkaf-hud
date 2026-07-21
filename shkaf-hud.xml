@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>shkaf-hud</Name>
-  <Repository>ghcr.io/rgcustom/shkaf-hud:latest</Repository>
-  <Registry>https://ghcr.io/rgcustom/shkaf-hud</Registry>
+  <Repository>ghcr.io/ТВОЙ_ЮЗЕР/shkaf-hud:latest</Repository>
+  <Registry>https://ghcr.io/ТВОЙ_ЮЗЕР/shkaf-hud</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>sh</Shell>
@@ -10,7 +10,7 @@
   <Support/>
   <Overview>Мост между статистикой хоста (CPU/RAM/NET/DISK), Tautulli и Pro Micro (OLED + WS2812 индикаторы). Никакого веб-интерфейса, чистый фоновый воркер.</Overview>
   <Category>Tools:</Category>
-  <WebUI/>
+  <WebUI>http://[IP]:[PORT:8189]/</WebUI>
   <TemplateURL/>
   <Icon>https://raw.githubusercontent.com/RGCustom/shkaf-hud/main/icon.png</Icon>
   <ExtraParams/>
@@ -20,6 +20,10 @@
   <DonateText/>
   <DonateLink/>
   <Requires/>
+
+  <!-- Веб-интерфейс: живое превью баров/OLED + смена цветов лент -->
+  <Config Name="WebUI port" Target="8189" Default="8189" Mode="tcp" Description="Порт живого превью и настройки цветов" Type="Port" Display="always" Required="true" Mask="false"/>
+  <Config Name="Config storage" Target="/config" Default="/mnt/user/appdata/shkaf-hud" Mode="rw" Description="Куда сохраняются выбранные цвета лент (переживает пересоздание контейнера)" Type="Path" Display="always" Required="true" Mask="false"/>
 
   <!-- USB serial устройство Pro Micro -->
   <Config Name="Pro Micro serial" Target="/dev/ttyACM0" Default="/dev/serial/by-id/CHANGE_ME" Mode="rw" Description="Точный путь узнать: ls -l /dev/serial/by-id/ на хосте, после подключения Pro Micro" Type="Device" Display="always" Required="true" Mask="false"/>

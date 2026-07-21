@@ -6,9 +6,13 @@ shkaf_stats_bridge.py  (контейнер: shkaf-hud)
 через Tautulli, шлёт по USB-serial на Pro Micro одну строку за тик.
 
 Формат строки (pipe-delimited, \n в конце), общие поля есть всегда:
-    CPU:<0-100>|RAM:<0-100>|NET:<0-100>|DISK:<0-100>|SCREEN:LIB|MOVIES:<n>|SERIES:<n>|USED:<TB>|FREE:<TB>
+    CPU:<0-100>|RAM:<0-100>|NET:<0-100>|DISK:<0-100>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:LIB|MOVIES:<n>|SERIES:<n>|USED:<TB>|FREE:<TB>
 или
-    CPU:<0-100>|RAM:<0-100>|NET:<0-100>|DISK:<0-100>|SCREEN:STREAM|IDX:<n>|CNT:<n>|TITLE:<...>|USER:<...>|PROG:<0-100>
+    CPU:<0-100>|RAM:<0-100>|NET:<0-100>|DISK:<0-100>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:STREAM|IDX:<n>|CNT:<n>|TITLE:<...>|USER:<...>|PROG:<0-100>
+
+C0..C3 - цвета баров (CPU/RAM/NET/DISK) в hex без "#", настраиваются через
+веб-интерфейс контейнера (порт WEB_PORT, по умолчанию 8189) и сохраняются
+в CONFIG_DIR/colors.json между перезапусками.
 
 Ротация экрана (LIB / STREAM 1..N) решается на хосте - Arduino просто
 рендерит то, что прислали, никакой логики выбора экрана на нём нет.
@@ -44,7 +48,145 @@ SCREEN_ROTATE_SECONDS = float(os.environ.get("SCREEN_ROTATE_SECONDS", "4"))
 
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "1.0"))
 
+WEB_PORT = int(os.environ.get("WEB_PORT", "8189"))
+CONFIG_DIR = os.environ.get("CONFIG_DIR", "/config")
+COLORS_FILE = os.path.join(CONFIG_DIR, "colors.json")
+
+DEFAULT_COLORS = {"cpu": "FF0000", "ram": "00FF00", "net": "0000FF", "disk": "FFFF00"}
+
 # -------------------------------------------------------------
+
+import json
+import threading
+from flask import Flask, request, jsonify, Response
+
+state_lock = threading.Lock()
+state = {
+    "cpu": 0, "ram": 0, "net": 0, "disk": 0,
+    "screen": "LIB",
+    "movies": 0, "series": 0, "used": 0, "free": 0,
+    "stream_idx": 0, "stream_cnt": 0, "stream_title": "", "stream_user": "", "stream_prog": 0,
+    "colors": dict(DEFAULT_COLORS),
+}
+
+
+def load_colors():
+    try:
+        with open(COLORS_FILE) as f:
+            saved = json.load(f)
+        colors = dict(DEFAULT_COLORS)
+        colors.update(saved)
+        return colors
+    except Exception:
+        return dict(DEFAULT_COLORS)
+
+
+def save_colors(colors):
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(COLORS_FILE, "w") as f:
+        json.dump(colors, f)
+
+
+# ---------------- веб-интерфейс ----------------
+
+app = Flask(__name__)
+
+PAGE_HTML = """<!doctype html>
+<html><head><meta charset="utf-8"><title>shkaf-hud</title>
+<style>
+  body { background:#111; color:#ddd; font-family:sans-serif; padding:20px; }
+  .bars { display:flex; gap:24px; align-items:flex-end; height:160px; margin-bottom:24px; }
+  .bar-wrap { display:flex; flex-direction:column; align-items:center; gap:8px; }
+  .bar-track { width:36px; height:140px; background:#222; border-radius:4px; display:flex; flex-direction:column-reverse; overflow:hidden; }
+  .bar-fill { width:100%; transition:height .3s; }
+  .label { font-size:13px; }
+  input[type=color] { width:36px; height:28px; border:none; background:none; }
+  .oled { background:#000; color:#7fd8ff; font-family:monospace; font-size:20px; white-space:pre;
+          width:340px; padding:14px; border-radius:6px; line-height:1.4; }
+</style></head>
+<body>
+  <h2>shkaf-hud - live preview</h2>
+  <div class="bars">
+    <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-cpu"></div></div>
+      <input type="color" id="color-cpu"><div class="label">CPU <span id="val-cpu"></span>%</div></div>
+    <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-ram"></div></div>
+      <input type="color" id="color-ram"><div class="label">RAM <span id="val-ram"></span>%</div></div>
+    <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-net"></div></div>
+      <input type="color" id="color-net"><div class="label">NET <span id="val-net"></span>%</div></div>
+    <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-disk"></div></div>
+      <input type="color" id="color-disk"><div class="label">DISK <span id="val-disk"></span>%</div></div>
+  </div>
+  <div class="oled" id="oled"></div>
+
+<script>
+const keys = ["cpu","ram","net","disk"];
+let editingColor = false;
+
+keys.forEach(k => {
+  document.getElementById("color-" + k).addEventListener("input", () => editingColor = true);
+  document.getElementById("color-" + k).addEventListener("change", sendColors);
+});
+
+function sendColors() {
+  const body = {};
+  keys.forEach(k => body[k] = document.getElementById("color-" + k).value.slice(1));
+  fetch("/api/colors", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) })
+    .then(() => editingColor = false);
+}
+
+function pad(s, n) { s = String(s); while (s.length < n) s += " "; return s.slice(0, n); }
+
+function renderOled(s) {
+  if (s.screen === "STREAM" && s.stream_cnt > 0) {
+    let title = s.stream_title.slice(0, 10);
+    let user = s.stream_user.slice(0, 6);
+    return `Stream ${s.stream_idx}/${s.stream_cnt}\\n${title}\\n${pad(user,7)}${s.stream_prog}%`;
+  }
+  return `Movies  ${s.movies}\\nSeries  ${s.series}\\n${s.used}/${s.free}TB`;
+}
+
+function refresh() {
+  fetch("/api/state").then(r => r.json()).then(s => {
+    keys.forEach(k => {
+      document.getElementById("fill-" + k).style.height = s[k] + "%";
+      document.getElementById("fill-" + k).style.background = "#" + s.colors[k];
+      document.getElementById("val-" + k).textContent = s[k];
+      if (!editingColor) document.getElementById("color-" + k).value = "#" + s.colors[k];
+    });
+    document.getElementById("oled").textContent = renderOled(s);
+  });
+}
+setInterval(refresh, 1000);
+refresh();
+</script>
+</body></html>
+"""
+
+
+@app.route("/")
+def index():
+    return Response(PAGE_HTML, mimetype="text/html")
+
+
+@app.route("/api/state")
+def api_state():
+    with state_lock:
+        return jsonify(dict(state))
+
+
+@app.route("/api/colors", methods=["POST"])
+def api_colors():
+    body = request.get_json(force=True)
+    with state_lock:
+        for k in ("cpu", "ram", "net", "disk"):
+            if k in body:
+                state["colors"][k] = body[k].upper()
+        save_colors(state["colors"])
+    return jsonify({"ok": True})
+
+
+def run_web():
+    app.run(host="0.0.0.0", port=WEB_PORT, use_reloader=False)
 
 DISK_NAME_RE = re.compile(r"^(sd[a-z]+|nvme\d+n\d+)$")
 
@@ -162,6 +304,11 @@ def get_library_counts():
 # ---------------- главный цикл ----------------
 
 def main():
+    with state_lock:
+        state["colors"] = load_colors()
+
+    threading.Thread(target=run_web, daemon=True).start()
+
     ser = serial.Serial(SERIAL_PORT, BAUD, timeout=1)
     time.sleep(2)
 
@@ -240,14 +387,30 @@ def main():
 
         common = f"CPU:{cpu_pct:.0f}|RAM:{ram_pct:.0f}|NET:{net_pct:.0f}|DISK:{disk_pct:.0f}"
 
+        with state_lock:
+            colors = state["colors"]
+        color_part = f"|C0:{colors['cpu']}|C1:{colors['ram']}|C2:{colors['net']}|C3:{colors['disk']}"
+
         if count == 0 or screen_index == 0:
-            line = f"{common}|SCREEN:LIB|MOVIES:{movies}|SERIES:{series}|USED:{used_tb}|FREE:{free_tb}\n"
+            line = f"{common}{color_part}|SCREEN:LIB|MOVIES:{movies}|SERIES:{series}|USED:{used_tb}|FREE:{free_tb}\n"
+            with state_lock:
+                state.update({
+                    "cpu": round(cpu_pct), "ram": round(ram_pct), "net": round(net_pct), "disk": round(disk_pct),
+                    "screen": "LIB", "movies": movies, "series": series, "used": used_tb, "free": free_tb,
+                    "stream_cnt": 0,
+                })
         else:
             s = sessions[screen_index - 1]
             line = (
-                f"{common}|SCREEN:STREAM|IDX:{screen_index}|CNT:{count}|"
+                f"{common}{color_part}|SCREEN:STREAM|IDX:{screen_index}|CNT:{count}|"
                 f"TITLE:{sanitize(s['title'])}|USER:{sanitize(s['user'])}|PROG:{s['progress']}\n"
             )
+            with state_lock:
+                state.update({
+                    "cpu": round(cpu_pct), "ram": round(ram_pct), "net": round(net_pct), "disk": round(disk_pct),
+                    "screen": "STREAM", "stream_idx": screen_index, "stream_cnt": count,
+                    "stream_title": s["title"], "stream_user": s["user"], "stream_prog": s["progress"],
+                })
 
         try:
             ser.write(line.encode("utf-8"))

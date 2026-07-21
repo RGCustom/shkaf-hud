@@ -11,6 +11,10 @@ services:
 
     volumes:
       - "${ARRAY_PATH:-/mnt/user}:/mnt/user:ro"
+      - "./config:/config"
+
+    ports:
+      - "8189:8189"
 
     env_file:
       - .env

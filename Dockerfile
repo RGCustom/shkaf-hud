@@ -7,4 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY shkaf_stats_bridge.py .
 
+EXPOSE 8189
+
 CMD ["python3", "-u", "shkaf_stats_bridge.py"]
