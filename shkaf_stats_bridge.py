@@ -6,7 +6,7 @@ shkaf_stats_bridge.py  (контейнер: shkaf-hud)
 через Tautulli, шлёт по USB-serial на Pro Micro одну строку за тик.
 
 Формат строки (pipe-delimited, \n в конце), общие поля есть всегда:
-    CPU:<0-100>|RAM:<0-100>|NET:<0-100>|DISK:<0-100>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:LIB|MOVIES:<n>|SERIES:<n>|USED:<TB>|FREE:<TB>
+    CPU:<0-100>|RAM:<0-100>|NET:<0-100>|DISK:<0-100>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:LIB|MOVIES:<n>|SERIES:<n>|TOTC:<TBx100>|FREEC:<TBx100>|ARRPCT:<0-100>
 или
     CPU:<0-100>|RAM:<0-100>|NET:<0-100>|DISK:<0-100>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:STREAM|IDX:<n>|CNT:<n>|TITLE:<...>|USER:<...>|PROG:<0-100>
 
@@ -64,7 +64,7 @@ state_lock = threading.Lock()
 state = {
     "cpu": 0, "ram": 0, "net": 0, "disk": 0,
     "screen": "LIB",
-    "movies": 0, "series": 0, "used": 0, "free": 0,
+    "movies": 0, "series": 0, "total_tb": 0, "free_tb": 0, "arr_pct": 0,
     "stream_idx": 0, "stream_cnt": 0, "stream_title": "", "stream_user": "", "stream_prog": 0,
     "colors": dict(DEFAULT_COLORS),
 }
@@ -94,29 +94,57 @@ app = Flask(__name__)
 PAGE_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><title>shkaf-hud</title>
 <style>
-  body { background:#111; color:#ddd; font-family:sans-serif; padding:20px; }
-  .bars { display:flex; gap:24px; align-items:flex-end; height:160px; margin-bottom:24px; }
-  .bar-wrap { display:flex; flex-direction:column; align-items:center; gap:8px; }
-  .bar-track { width:36px; height:140px; background:#222; border-radius:4px; display:flex; flex-direction:column-reverse; overflow:hidden; }
-  .bar-fill { width:100%; transition:height .3s; }
-  .label { font-size:13px; }
-  input[type=color] { width:36px; height:28px; border:none; background:none; }
-  .oled { background:#000; color:#7fd8ff; font-family:monospace; font-size:20px; white-space:pre;
-          width:340px; padding:14px; border-radius:6px; line-height:1.4; }
+  * { box-sizing: border-box; }
+  body { background:#0d0d0d; color:#e6e6e6; font-family:-apple-system,Segoe UI,Roboto,sans-serif;
+         margin:0; padding:48px 20px; }
+  .wrap { max-width:480px; margin:0 auto; }
+  h1 { font-size:20px; font-weight:600; margin:0 0 4px; letter-spacing:.3px; }
+  .sub { color:#888; font-size:13px; margin:0 0 28px; }
+  .card { background:#1a1a1a; border:1px solid #2a2a2a; border-radius:14px;
+          padding:24px; margin-bottom:20px; box-shadow:0 4px 16px rgba(0,0,0,.3); }
+  .bars { display:flex; gap:20px; align-items:flex-end; height:150px; margin-bottom:20px; }
+  .bar-wrap { flex:1; display:flex; flex-direction:column; align-items:center; gap:10px; }
+  .bar-track { width:100%; max-width:40px; height:130px; background:#0d0d0d; border-radius:6px;
+               display:flex; flex-direction:column-reverse; overflow:hidden; border:1px solid #2a2a2a; }
+  .bar-fill { width:100%; transition:height .3s, background .2s; }
+  .label { font-size:12px; color:#aaa; text-align:center; }
+  .label b { color:#e6e6e6; font-size:13px; }
+  input[type=color] { width:32px; height:24px; border:none; background:none; border-radius:6px;
+                       cursor:pointer; padding:0; }
+  .oled { background:#000; color:#7fd8ff; font-family:"SF Mono",Consolas,monospace; font-size:19px;
+          white-space:pre; padding:16px; border-radius:8px; line-height:1.45; }
+  .array-row { margin-top:16px; }
+  .array-text { font-size:13px; color:#bbb; margin-bottom:8px; }
+  .array-track { width:100%; height:8px; background:#0d0d0d; border:1px solid #2a2a2a;
+                 border-radius:4px; overflow:hidden; }
+  .array-fill { height:100%; background:#7fd8ff; transition:width .3s; }
 </style></head>
 <body>
-  <h2>shkaf-hud - live preview</h2>
-  <div class="bars">
-    <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-cpu"></div></div>
-      <input type="color" id="color-cpu"><div class="label">CPU <span id="val-cpu"></span>%</div></div>
-    <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-ram"></div></div>
-      <input type="color" id="color-ram"><div class="label">RAM <span id="val-ram"></span>%</div></div>
-    <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-net"></div></div>
-      <input type="color" id="color-net"><div class="label">NET <span id="val-net"></span>%</div></div>
-    <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-disk"></div></div>
-      <input type="color" id="color-disk"><div class="label">DISK <span id="val-disk"></span>%</div></div>
+<div class="wrap">
+  <h1>shkaf-hud</h1>
+  <p class="sub">живое превью ленты и OLED</p>
+
+  <div class="card">
+    <div class="bars">
+      <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-cpu"></div></div>
+        <input type="color" id="color-cpu"><div class="label">CPU<br><b><span id="val-cpu"></span>%</b></div></div>
+      <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-ram"></div></div>
+        <input type="color" id="color-ram"><div class="label">RAM<br><b><span id="val-ram"></span>%</b></div></div>
+      <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-net"></div></div>
+        <input type="color" id="color-net"><div class="label">NET<br><b><span id="val-net"></span>%</b></div></div>
+      <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-disk"></div></div>
+        <input type="color" id="color-disk"><div class="label">DISK<br><b><span id="val-disk"></span>%</b></div></div>
+    </div>
   </div>
-  <div class="oled" id="oled"></div>
+
+  <div class="card">
+    <div class="oled" id="oled"></div>
+    <div class="array-row">
+      <div class="array-text" id="array-text"></div>
+      <div class="array-track"><div class="array-fill" id="array-fill"></div></div>
+    </div>
+  </div>
+</div>
 
 <script>
 const keys = ["cpu","ram","net","disk"];
@@ -142,7 +170,7 @@ function renderOled(s) {
     let user = s.stream_user.slice(0, 6);
     return `Stream ${s.stream_idx}/${s.stream_cnt}\\n${title}\\n${pad(user,7)}${s.stream_prog}%`;
   }
-  return `Movies  ${s.movies}\\nSeries  ${s.series}\\n${s.used}/${s.free}TB`;
+  return `Movies  ${s.movies}\\nSeries  ${s.series}`;
 }
 
 function refresh() {
@@ -154,6 +182,9 @@ function refresh() {
       if (!editingColor) document.getElementById("color-" + k).value = "#" + s.colors[k];
     });
     document.getElementById("oled").textContent = renderOled(s);
+    document.getElementById("array-text").textContent =
+      s.total_tb.toFixed(2) + " TB (" + s.free_tb.toFixed(2) + " free)";
+    document.getElementById("array-fill").style.width = s.arr_pct + "%";
   });
 }
 setInterval(refresh, 1000);
@@ -262,9 +293,11 @@ def read_array_usage_tb():
     st = os.statvfs(ARRAY_PATH)
     total = st.f_frsize * st.f_blocks
     free = st.f_frsize * st.f_bavail
-    used = total - free
     tb = 1024 ** 4
-    return round(used / tb), round(free / tb)
+    total_tb = round(total / tb, 2)
+    free_tb = round(free / tb, 2)
+    used_pct = round((total - free) / total * 100) if total > 0 else 0
+    return total_tb, free_tb, used_pct
 
 
 # ---------- Tautulli ----------
@@ -287,7 +320,8 @@ def get_activity():
                 "progress": int(s.get("progress_percent", 0) or 0),
             })
         return out
-    except Exception:
+    except Exception as e:
+        print(f"[tautulli] get_activity failed: {e}", flush=True)
         return []
 
 
@@ -297,7 +331,8 @@ def get_library_counts():
         movies = sum(int(l.get("count", 0) or 0) for l in libs if l.get("section_type") == "movie")
         series = sum(int(l.get("count", 0) or 0) for l in libs if l.get("section_type") == "show")
         return movies, series
-    except Exception:
+    except Exception as e:
+        print(f"[tautulli] get_library_counts failed: {e}", flush=True)
         return 0, 0
 
 
@@ -319,7 +354,7 @@ def main():
     prev_time = time.time()
 
     movies, series = get_library_counts()
-    used_tb, free_tb = read_array_usage_tb()
+    total_tb, free_tb, arr_pct = read_array_usage_tb()
     last_library_refresh = time.time()
     last_array_refresh = time.time()
 
@@ -371,7 +406,7 @@ def main():
 
         # Массив - редко обновляем
         if now - last_array_refresh > ARRAY_REFRESH_SECONDS:
-            used_tb, free_tb = read_array_usage_tb()
+            total_tb, free_tb, arr_pct = read_array_usage_tb()
             last_array_refresh = now
 
         # Активные стримы
@@ -391,12 +426,21 @@ def main():
             colors = state["colors"]
         color_part = f"|C0:{colors['cpu']}|C1:{colors['ram']}|C2:{colors['net']}|C3:{colors['disk']}"
 
+        # TB с точностью до сотых - Arduino парсит только целые, поэтому шлём
+        # "центи-терабайты" (умноженное на 100 целое число) и делим на месте
+        totc = round(total_tb * 100)
+        freec = round(free_tb * 100)
+
         if count == 0 or screen_index == 0:
-            line = f"{common}{color_part}|SCREEN:LIB|MOVIES:{movies}|SERIES:{series}|USED:{used_tb}|FREE:{free_tb}\n"
+            line = (
+                f"{common}{color_part}|SCREEN:LIB|MOVIES:{movies}|SERIES:{series}|"
+                f"TOTC:{totc}|FREEC:{freec}|ARRPCT:{arr_pct}\n"
+            )
             with state_lock:
                 state.update({
                     "cpu": round(cpu_pct), "ram": round(ram_pct), "net": round(net_pct), "disk": round(disk_pct),
-                    "screen": "LIB", "movies": movies, "series": series, "used": used_tb, "free": free_tb,
+                    "screen": "LIB", "movies": movies, "series": series,
+                    "total_tb": total_tb, "free_tb": free_tb, "arr_pct": arr_pct,
                     "stream_cnt": 0,
                 })
         else:

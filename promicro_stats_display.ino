@@ -3,7 +3,7 @@
 
   Pro Micro читает по USB-serial строки вида:
 
-    CPU:57|RAM:42|NET:78|DISK:61|SCREEN:LIB|MOVIES:1243|SERIES:87|USED:134|FREE:86
+    CPU:57|RAM:42|NET:78|DISK:61|SCREEN:LIB|MOVIES:1243|SERIES:87|TOTC:941|FREEC:310|ARRPCT:67
   или
     CPU:57|RAM:42|NET:78|DISK:61|SCREEN:STREAM|IDX:1|CNT:2|TITLE:Dune Part Two|USER:konst|PROG:45
 
@@ -67,7 +67,7 @@ Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
 int cpuPct = 0, ramPct = 0, netPct = 0, diskPct = 0;
 
 String screenType = "LIB";           // "LIB" или "STREAM"
-int movies = 0, series = 0, usedTB = 0, freeTB = 0;
+int movies = 0, series = 0, totC = 0, freeC = 0, arrPct = 0;
 int streamIdx = 0, streamCnt = 0, streamProg = 0;
 String streamTitle = "", streamUser = "";
 
@@ -138,8 +138,9 @@ void parseLine(const String &line) {
       else if (key == "SCREEN") screenType = val;
       else if (key == "MOVIES") movies = val.toInt();
       else if (key == "SERIES") series = val.toInt();
-      else if (key == "USED") usedTB = val.toInt();
-      else if (key == "FREE") freeTB = val.toInt();
+      else if (key == "TOTC") totC = val.toInt();
+      else if (key == "FREEC") freeC = val.toInt();
+      else if (key == "ARRPCT") arrPct = val.toInt();
       else if (key == "IDX") streamIdx = val.toInt();
       else if (key == "CNT") streamCnt = val.toInt();
       else if (key == "TITLE") streamTitle = val;
@@ -230,10 +231,15 @@ void drawOled() {
     display.println(series);
 
     display.setCursor(0, 44);
-    display.print(usedTB);
-    display.print('/');
-    display.print(freeTB);
-    display.print(F("TB"));
+    display.setTextSize(1);
+    display.print(totC / 100.0, 2);
+    display.print(F("TB ("));
+    display.print(freeC / 100.0, 2);
+    display.print(F(" free)"));
+
+    int barW = map(arrPct, 0, 100, 0, OLED_WIDTH - 1);
+    display.drawRect(0, 56, OLED_WIDTH - 1, 6, SSD1306_WHITE);
+    display.fillRect(1, 57, barW, 4, SSD1306_WHITE);
   }
 
   display.display();

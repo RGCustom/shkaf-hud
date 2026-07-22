@@ -26,7 +26,7 @@
   <Config Name="Config storage" Target="/config" Default="/mnt/user/appdata/shkaf-hud" Mode="rw" Description="Куда сохраняются выбранные цвета лент (переживает пересоздание контейнера)" Type="Path" Display="always" Required="true" Mask="false"/>
 
   <!-- USB serial устройство Pro Micro -->
-  <Config Name="Pro Micro serial" Target="/dev/ttyACM0" Default="/dev/serial/by-id/CHANGE_ME" Mode="rw" Description="Точный путь узнать: ls -l /dev/serial/by-id/ на хосте, после подключения Pro Micro" Type="Device" Display="always" Required="true" Mask="false"/>
+  <Config Name="Pro Micro serial" Target="/dev/serial/by-id/usb-Arduino_LLC_Arduino_Leonardo-if00" Default="/dev/serial/by-id/usb-Arduino_LLC_Arduino_Leonardo-if00" Mode="rw" Description="Точный путь узнать: ls -l /dev/serial/by-id/ на хосте, после подключения Pro Micro" Type="Device" Display="always" Required="true" Mask="false"/>
 
   <!-- Массив (для df: занято/свободно места) -->
   <Config Name="Array path" Target="/mnt/user" Default="/mnt/user" Mode="ro" Description="Точка монтирования массива для подсчёта занятого/свободного места" Type="Path" Display="always" Required="true" Mask="false"/>
@@ -49,6 +49,6 @@
   <Config Name="Poll interval (sec)" Target="POLL_INTERVAL" Default="1.0" Mode="" Description="Как часто слать данные на Pro Micro" Type="Variable" Display="advanced" Required="false" Mask="false"/>
 
   <!-- Serial (обычно трогать не нужно) -->
-  <Config Name="Serial port (internal)" Target="SERIAL_PORT" Default="/dev/ttyACM0" Mode="" Description="Путь внутри контейнера - должен совпадать с Target устройства выше" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Serial port (internal)" Target="SERIAL_PORT" Default="/dev/serial/by-id/usb-Arduino_LLC_Arduino_Leonardo-if00" Mode="" Description="Путь внутри контейнера - должен совпадать с Target устройства выше" Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="Baud rate" Target="BAUD" Default="115200" Mode="" Description="Должен совпадать с Serial.begin() в скетче" Type="Variable" Display="advanced" Required="false" Mask="false"/>
 </Container>
