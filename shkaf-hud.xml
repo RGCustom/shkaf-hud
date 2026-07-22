@@ -3,7 +3,7 @@
   <Name>shkaf-hud</Name>
   <Repository>ghcr.io/rgcustom/shkaf-hud:latest</Repository>
   <Registry>https://ghcr.io/rgcustom/shkaf-hud</Registry>
-  <Network>bridge</Network>
+  <Network>br0</Network>
   <MyIP/>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
@@ -36,7 +36,9 @@
   <Config Name="Tautulli API key" Target="TAUTULLI_API_KEY" Default="" Mode="" Description="Settings -> Web Interface -> API в Tautulli" Type="Variable" Display="always" Required="true" Mask="true"/>
 
   <!-- Сеть -->
-  <Config Name="Network interface" Target="NET_IFACE" Default="eth0" Mode="" Description="Интерфейс для измерения сетевой нагрузки (eth0, br0 и т.п.)" Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="Host /proc (для реальной сетевой статистики)" Target="/hostproc" Default="/proc" Mode="ro" Description="Обязательно, иначе контейнер в br0 видит только свой собственный микро-трафик, а не реальную загрузку сети хоста" Type="Path" Display="always" Required="true" Mask="false"/>
+  <Config Name="Network interface" Target="NET_IFACE" Default="br0" Mode="" Description="Интерфейс для измерения сетевой нагрузки (br0/bond0 - смотри `ip a` на хосте)" Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="Network stats path" Target="NET_STATS_PATH" Default="/hostproc/net/dev" Mode="" Description="Не трогать, если не менял путь монтирования /proc выше" Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="Network max Mbps" Target="NET_MAX_MBPS" Default="500" Mode="" Description="Что считать 100% на шкале сети" Type="Variable" Display="always" Required="true" Mask="false"/>
 
   <!-- Диски -->

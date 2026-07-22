@@ -35,8 +35,9 @@ BAUD = int(os.environ.get("BAUD", "115200"))
 TAUTULLI_URL = os.environ.get("TAUTULLI_URL", "http://127.0.0.1:8181")
 TAUTULLI_API_KEY = os.environ.get("TAUTULLI_API_KEY", "")
 
-NET_IFACE = os.environ.get("NET_IFACE", "eth0")
+NET_IFACE = os.environ.get("NET_IFACE", "br0")
 NET_MAX_MBPS = float(os.environ.get("NET_MAX_MBPS", "500"))
+NET_STATS_PATH = os.environ.get("NET_STATS_PATH", "/proc/net/dev")
 
 # Диски для %util: пусто = автоопределение всех sdX/nvmeXnY
 DISK_DEVICES = os.environ.get("DISK_DEVICES", "")

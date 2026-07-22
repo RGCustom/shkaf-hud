@@ -12,6 +12,7 @@ services:
     volumes:
       - "${ARRAY_PATH:-/mnt/user}:/mnt/user:ro"
       - "./config:/config"
+      - "/proc:/hostproc:ro"
 
     ports:
       - "8189:8189"
