@@ -9,13 +9,11 @@ services:
     devices:
       - "${SERIAL_DEVICE_PATH}:/dev/ttyACM0"
 
+    network_mode: host
+
     volumes:
       - "${ARRAY_PATH:-/mnt/user}:/mnt/user:ro"
       - "./config:/config"
-      - "/proc:/hostproc:ro"
-
-    ports:
-      - "8189:8189"
 
     env_file:
       - .env
