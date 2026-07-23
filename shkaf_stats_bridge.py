@@ -68,6 +68,7 @@ state = {
     "movies": 0, "series": 0, "total_tb": 0, "free_tb": 0, "arr_pct": 0,
     "stream_idx": 0, "stream_cnt": 0, "stream_title": "", "stream_user": "", "stream_prog": 0,
     "colors": dict(DEFAULT_COLORS),
+    "serial_connected": False,
 }
 
 
@@ -94,38 +95,66 @@ app = Flask(__name__)
 
 PAGE_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><title>shkaf-hud</title>
+<link rel="icon" type="image/png" href="https://raw.githubusercontent.com/RGCustom/shkaf-hud/main/favicon.png">
 <style>
   * { box-sizing: border-box; }
-  body { background:#0d0d0d; color:#e6e6e6; font-family:-apple-system,Segoe UI,Roboto,sans-serif;
-         margin:0; padding:48px 20px; }
+  :root {
+    --bg: #17181a;
+    --panel: #1f2123;
+    --border: #2c2e31;
+    --text: #e6e6e6;
+    --muted: #8a8d91;
+    --accent: #ff8c2f;
+    --accent-dim: #ff8c2f33;
+    --danger: #e0483e;
+  }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,Segoe UI,Roboto,sans-serif;
+         margin:0; padding:44px 20px; }
   .wrap { max-width:480px; margin:0 auto; }
-  h1 { font-size:20px; font-weight:600; margin:0 0 4px; letter-spacing:.3px; }
-  .sub { color:#888; font-size:13px; margin:0 0 28px; }
-  .card { background:#1a1a1a; border:1px solid #2a2a2a; border-radius:14px;
-          padding:24px; margin-bottom:20px; box-shadow:0 4px 16px rgba(0,0,0,.3); }
-  .bars { display:flex; gap:20px; align-items:flex-end; height:150px; margin-bottom:20px; }
+  .brand { display:flex; align-items:center; gap:10px; margin-bottom:4px; }
+  .brand .dot { width:9px; height:9px; border-radius:50%; background:var(--accent);
+                box-shadow:0 0 8px var(--accent); }
+  h1 { font-size:19px; font-weight:600; margin:0; letter-spacing:.3px; }
+  .sub { color:var(--muted); font-size:13px; margin:2px 0 24px 19px; }
+
+  .banner { display:none; background:#3a2418; border:1px solid var(--danger); color:#ffb3ab;
+            border-radius:10px; padding:12px 16px; margin-bottom:18px; font-size:13px;
+            align-items:center; gap:10px; }
+  .banner.show { display:flex; }
+  .banner .b-dot { width:8px; height:8px; border-radius:50%; background:var(--danger); flex-shrink:0; }
+
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:14px;
+          padding:22px; margin-bottom:18px; box-shadow:0 4px 16px rgba(0,0,0,.25); }
+  .card h2 { font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--muted);
+             margin:0 0 18px; font-weight:600; }
+
+  .bars { display:flex; gap:20px; align-items:flex-end; height:150px; margin-bottom:18px; }
   .bar-wrap { flex:1; display:flex; flex-direction:column; align-items:center; gap:10px; }
-  .bar-track { width:100%; max-width:40px; height:130px; background:#0d0d0d; border-radius:6px;
-               display:flex; flex-direction:column-reverse; overflow:hidden; border:1px solid #2a2a2a; }
+  .bar-track { width:100%; max-width:40px; height:130px; background:#101112; border-radius:6px;
+               display:flex; flex-direction:column-reverse; overflow:hidden; border:1px solid var(--border); }
   .bar-fill { width:100%; transition:height .3s, background .2s; }
-  .label { font-size:12px; color:#aaa; text-align:center; }
-  .label b { color:#e6e6e6; font-size:13px; }
+  .label { font-size:12px; color:var(--muted); text-align:center; }
+  .label b { color:var(--text); font-size:13px; }
   input[type=color] { width:32px; height:24px; border:none; background:none; border-radius:6px;
                        cursor:pointer; padding:0; }
-  .oled { background:#000; color:#7fd8ff; font-family:"SF Mono",Consolas,monospace; font-size:19px;
-          white-space:pre; padding:16px; border-radius:8px; line-height:1.45; }
-  .array-row { margin-top:16px; }
-  .array-text { font-size:13px; color:#bbb; margin-bottom:8px; }
-  .array-track { width:100%; height:8px; background:#0d0d0d; border:1px solid #2a2a2a;
-                 border-radius:4px; overflow:hidden; }
-  .array-fill { height:100%; background:#7fd8ff; transition:width .3s; }
+
+  .oled { background:#000; color:#7fd8ff; font-family:"SF Mono",Consolas,monospace; font-size:17px;
+          overflow:hidden; padding:16px; border-radius:8px; line-height:1.5; }
+  .oled .line { white-space:nowrap; }
+  .oled .marquee { display:inline-block; padding-right:40px; }
+
+  footer { text-align:center; color:var(--border); font-size:11px; margin-top:8px; }
 </style></head>
 <body>
 <div class="wrap">
-  <h1>shkaf-hud</h1>
+  <div class="brand"><span class="dot"></span><h1>shkaf-hud</h1></div>
   <p class="sub">живое превью ленты и OLED</p>
 
+  <div class="banner" id="banner"><span class="b-dot"></span>
+    Pro Micro не подключена - лента и OLED не обновляются, статистика и настройки продолжают работать</div>
+
   <div class="card">
+    <h2>Индикаторы</h2>
     <div class="bars">
       <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-cpu"></div></div>
         <input type="color" id="color-cpu"><div class="label">CPU<br><b><span id="val-cpu"></span>%</b></div></div>
@@ -139,12 +168,11 @@ PAGE_HTML = """<!doctype html>
   </div>
 
   <div class="card">
+    <h2>OLED</h2>
     <div class="oled" id="oled"></div>
-    <div class="array-row">
-      <div class="array-text" id="array-text"></div>
-      <div class="array-track"><div class="array-fill" id="array-fill"></div></div>
-    </div>
   </div>
+
+  <footer>shkaf-hud</footer>
 </div>
 
 <script>
@@ -165,29 +193,57 @@ function sendColors() {
 
 function pad(s, n) { s = String(s); while (s.length < n) s += " "; return s.slice(0, n); }
 
-function renderOled(s) {
+function oledLines(s) {
   if (s.screen === "STREAM" && s.stream_cnt > 0) {
-    let title = s.stream_title.slice(0, 10);
-    let user = s.stream_user.slice(0, 6);
-    return `Stream ${s.stream_idx}/${s.stream_cnt}\\n${title}\\n${pad(user,7)}${s.stream_prog}%`;
+    return [
+      `Stream ${s.stream_idx}/${s.stream_cnt}`,
+      s.stream_title,
+      `${pad(s.stream_user,7)}${s.stream_prog}%`,
+    ];
   }
-  return `Movies  ${s.movies}\\nSeries  ${s.series}`;
+  return [
+    `Movies  ${s.movies}`,
+    `Series  ${s.series}`,
+    `${s.total_tb.toFixed(2)}TB (${s.free_tb.toFixed(2)} free)`,
+  ];
+}
+
+function renderOled(s) {
+  const oled = document.getElementById("oled");
+  oled.innerHTML = "";
+  oledLines(s).forEach(text => {
+    const div = document.createElement("div");
+    div.className = "line";
+    if (text.length > 16) {
+      div.innerHTML = `<span class="marquee">${text}&nbsp;&nbsp;&nbsp;&nbsp;${text}</span>`;
+      div.style.animation = "scroll 8s linear infinite";
+      div.style.width = "100%";
+    } else {
+      div.textContent = text;
+    }
+    oled.appendChild(div);
+  });
 }
 
 function refresh() {
   fetch("/api/state").then(r => r.json()).then(s => {
+    document.getElementById("banner").classList.toggle("show", !s.serial_connected);
     keys.forEach(k => {
-      document.getElementById("fill-" + k).style.height = s[k] + "%";
-      document.getElementById("fill-" + k).style.background = "#" + s.colors[k];
-      document.getElementById("val-" + k).textContent = s[k];
+      const pct = s[k];
+      const color = pct >= 100 ? "#e0483e" : "#" + s.colors[k];
+      document.getElementById("fill-" + k).style.height = pct + "%";
+      document.getElementById("fill-" + k).style.background = color;
+      document.getElementById("val-" + k).textContent = pct;
       if (!editingColor) document.getElementById("color-" + k).value = "#" + s.colors[k];
     });
-    document.getElementById("oled").textContent = renderOled(s);
-    document.getElementById("array-text").textContent =
-      s.total_tb.toFixed(2) + " TB (" + s.free_tb.toFixed(2) + " free)";
-    document.getElementById("array-fill").style.width = s.arr_pct + "%";
+    renderOled(s);
   });
 }
+
+const styleTag = document.createElement("style");
+styleTag.textContent = "@keyframes scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }";
+document.head.appendChild(styleTag);
+
 setInterval(refresh, 1000);
 refresh();
 </script>
@@ -224,7 +280,7 @@ DISK_NAME_RE = re.compile(r"^(sd[a-z]+|nvme\d+n\d+)$")
 
 
 def sanitize(s: str) -> str:
-    return (s or "").replace("|", "/").replace("\n", " ").replace("\r", "")[:24]
+    return (s or "").replace("|", "/").replace("\n", " ").replace("\r", "")[:48]
 
 
 # ---------- CPU / RAM / NET ----------
@@ -294,7 +350,7 @@ def read_array_usage_tb():
     st = os.statvfs(ARRAY_PATH)
     total = st.f_frsize * st.f_blocks
     free = st.f_frsize * st.f_bavail
-    tb = 1024 ** 4
+    tb = 10 ** 12
     total_tb = round(total / tb, 2)
     free_tb = round(free / tb, 2)
     used_pct = round((total - free) / total * 100) if total > 0 else 0
@@ -339,14 +395,28 @@ def get_library_counts():
 
 # ---------------- главный цикл ----------------
 
+def try_open_serial():
+    try:
+        s = serial.Serial(SERIAL_PORT, BAUD, timeout=1)
+        time.sleep(2)
+        with state_lock:
+            state["serial_connected"] = True
+        print(f"[serial] connected: {SERIAL_PORT}", flush=True)
+        return s
+    except (serial.SerialException, OSError) as e:
+        with state_lock:
+            state["serial_connected"] = False
+        return None
+
+
 def main():
     with state_lock:
         state["colors"] = load_colors()
 
     threading.Thread(target=run_web, daemon=True).start()
 
-    ser = serial.Serial(SERIAL_PORT, BAUD, timeout=1)
-    time.sleep(2)
+    ser = try_open_serial()
+    last_reconnect_attempt = time.time()
 
     prev_idle, prev_total = read_cpu_times()
     prev_net = read_net_bytes(NET_IFACE)
@@ -457,16 +527,25 @@ def main():
                     "stream_title": s["title"], "stream_user": s["user"], "stream_prog": s["progress"],
                 })
 
-        try:
-            ser.write(line.encode("utf-8"))
-        except (serial.SerialException, OSError):
+        if ser is not None:
             try:
-                ser.close()
-            except Exception:
-                pass
-            time.sleep(2)
-            ser = serial.Serial(SERIAL_PORT, BAUD, timeout=1)
-            time.sleep(2)
+                ser.write(line.encode("utf-8"))
+            except (serial.SerialException, OSError):
+                print("[serial] write failed, will retry connecting", flush=True)
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+                ser = None
+                with state_lock:
+                    state["serial_connected"] = False
+                last_reconnect_attempt = now
+        else:
+            # Arduino не подключена (или отвалилась) - пробуем раз в 5 секунд,
+            # не блокируя при этом сбор статистики и веб-интерфейс
+            if now - last_reconnect_attempt > 5:
+                ser = try_open_serial()
+                last_reconnect_attempt = now
 
 
 if __name__ == "__main__":

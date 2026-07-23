@@ -71,6 +71,11 @@ int movies = 0, series = 0, totC = 0, freeC = 0, arrPct = 0;
 int streamIdx = 0, streamCnt = 0, streamProg = 0;
 String streamTitle = "", streamUser = "";
 
+unsigned long lastScrollMs = 0;
+int scrollOffset = 0;
+const unsigned long SCROLL_INTERVAL_MS = 300;
+const int TITLE_VISIBLE_CHARS = 20;  // при setTextSize(1) влезает ~21 символ
+
 String inputBuffer = "";
 
 void setup() {
@@ -160,7 +165,7 @@ void drawOneBar(int barIndex, int pct) {
   for (int level = 0; level < LEDS_PER_BAR; level++) {
     int logicalPos = barIndex * LEDS_PER_BAR + level;
     int rawIndex = LED_MAP[logicalPos];
-    leds[rawIndex] = (level < lit) ? BAR_COLOR[barIndex] : CRGB::Black;
+    leds[rawIndex] = (level < lit) ? (pct >= 100 ? CRGB::Red : BAR_COLOR[barIndex]) : CRGB::Black;
   }
 }
 
@@ -193,6 +198,25 @@ void runCalibration() {
 
 // ---------------- OLED ----------------
 
+// --- бегущая строка: если текст длиннее видимого окна, крутит его по кругу ---
+String scrollWindow(const String &text) {
+  static String lastText = "";
+  if (text != lastText) {
+    scrollOffset = 0;
+    lastText = text;
+  }
+
+  if ((int)text.length() <= TITLE_VISIBLE_CHARS) return text;
+
+  if (millis() - lastScrollMs > SCROLL_INTERVAL_MS) {
+    scrollOffset = (scrollOffset + 1) % (text.length() + 4);  // +4 = пауза-разрыв между кругами
+    lastScrollMs = millis();
+  }
+
+  String loop = text + F("    ") + text;  // пробел-разрыв между повторами
+  return loop.substring(scrollOffset, scrollOffset + TITLE_VISIBLE_CHARS);
+}
+
 void drawOled() {
   display.clearDisplay();
   display.setTextSize(2);
@@ -204,10 +228,11 @@ void drawOled() {
     display.print('/');
     display.println(streamCnt);
 
-    String t = streamTitle;
-    if (t.length() > 10) t = t.substring(0, 10);
-    display.setCursor(0, 22);
+    String t = scrollWindow(streamTitle);
+    display.setTextSize(1);
+    display.setCursor(0, 24);
     display.println(t);
+    display.setTextSize(2);
 
     display.setCursor(0, 44);
     String u = streamUser;
