@@ -125,8 +125,8 @@ PAGE_HTML = """<!doctype html>
 
   .card { background:var(--panel); border:1px solid var(--border); border-radius:14px;
           padding:22px; margin-bottom:18px; box-shadow:0 4px 16px rgba(0,0,0,.25); }
-  .card h2 { font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--muted);
-             margin:0 0 18px; font-weight:600; }
+  .card h2 { font-size:11px; color:var(--muted);
+             margin:0 0 18px; font-weight:600; white-space:nowrap; }
 
   .bars { display:flex; gap:20px; align-items:flex-end; height:150px; margin-bottom:18px; }
   .bar-wrap { flex:1; display:flex; flex-direction:column; align-items:center; gap:10px; }
@@ -140,8 +140,8 @@ PAGE_HTML = """<!doctype html>
 
   .oled { background:#000; color:#7fd8ff; font-family:"SF Mono",Consolas,monospace; font-size:17px;
           overflow:hidden; padding:16px; border-radius:8px; line-height:1.5; }
-  .oled .line { white-space:nowrap; }
-  .oled .marquee { display:inline-block; padding-right:40px; }
+  .oled .line { white-space:nowrap; overflow:hidden; }
+  .oled .marquee { display:inline-block; animation: scroll 8s linear infinite; }
 
   footer { text-align:center; color:var(--border); font-size:11px; margin-top:8px; }
 </style></head>
@@ -214,14 +214,17 @@ function renderOled(s) {
   oledLines(s).forEach(text => {
     const div = document.createElement("div");
     div.className = "line";
-    if (text.length > 16) {
-      div.innerHTML = `<span class="marquee">${text}&nbsp;&nbsp;&nbsp;&nbsp;${text}</span>`;
-      div.style.animation = "scroll 8s linear infinite";
-      div.style.width = "100%";
-    } else {
-      div.textContent = text;
-    }
+    const span = document.createElement("span");
+    span.textContent = text;
+    div.appendChild(span);
     oled.appendChild(div);
+
+    requestAnimationFrame(() => {
+      if (span.scrollWidth > oled.clientWidth) {
+        span.innerHTML = text + "&nbsp;&nbsp;&nbsp;&nbsp;" + text;
+        span.classList.add("marquee");
+      }
+    });
   });
 }
 
