@@ -22,6 +22,10 @@ C0..C3 - цвета баров (CPU/RAM/NET/DISK) в hex без "#", настр�
 """
 
 import os
+
+# Бампай эту строку при каждой значимой правке - так сразу видно в `docker logs`,
+# какая версия реально запущена, без сверки digest'ов вручную.
+SCRIPT_VERSION = "2026-07-22-3"
 import re
 import time
 import serial
@@ -154,7 +158,7 @@ PAGE_HTML = """<!doctype html>
     Pro Micro не подключена - лента и OLED не обновляются, статистика и настройки продолжают работать</div>
 
   <div class="card">
-    <h2>Индикаторы</h2>
+    <h2>SENSORS</h2>
     <div class="bars">
       <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-cpu"></div></div>
         <input type="color" id="color-cpu"><div class="label">CPU<br><b><span id="val-cpu"></span>%</b></div></div>
@@ -413,6 +417,8 @@ def try_open_serial():
 
 
 def main():
+    print(f"[shkaf-hud] starting, version {SCRIPT_VERSION}", flush=True)
+
     with state_lock:
         state["colors"] = load_colors()
 
