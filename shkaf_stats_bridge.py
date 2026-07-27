@@ -6,13 +6,15 @@ shkaf_stats_bridge.py  (контейнер: shkaf-hud)
 через Tautulli, шлёт по USB-serial на Pro Micro одну строку за тик.
 
 Формат строки (pipe-delimited, \n в конце), общие поля есть всегда:
-    CPU:<0-100>|RAM:<0-100>|NET:<0-100>|DISK:<0-100>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:LIB|MOVIES:<n>|SERIES:<n>|TOTC:<TBx100>|FREEC:<TBx100>|ARRPCT:<0-100>
+    BAR0:<0-100>|BAR1:<0-100>|BAR2:<0-100>|BAR3:<0-100>|BRI:<0-100>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:LIB|MOVIES:<n>|SERIES:<n>|TOTC:<TBx100>|FREEC:<TBx100>|ARRPCT:<0-100>
 или
-    CPU:<0-100>|RAM:<0-100>|NET:<0-100>|DISK:<0-100>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:STREAM|IDX:<n>|CNT:<n>|TITLE:<...>|USER:<...>|PROG:<0-100>
+    BAR0:<0-100>|BAR1:<0-100>|BAR2:<0-100>|BAR3:<0-100>|BRI:<0-100>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:STREAM|IDX:<n>|CNT:<n>|TITLE:<...>|USER:<...>|PROG:<0-100>
 
-C0..C3 - цвета баров (CPU/RAM/NET/DISK) в hex без "#", настраиваются через
-веб-интерфейс контейнера (порт WEB_PORT, по умолчанию 8189) и сохраняются
-в CONFIG_DIR/colors.json между перезапусками.
+BAR0..BAR3 - значение каждого физического бара (0-100%), метрика для каждого
+бара выбирается в веб-интерфейсе (CPU/RAM/NET/DISK %util/Array %/Cache %/CPU temp).
+BRI - общая яркость ленты (0-100%), тоже настраивается в веб-интерфейсе.
+C0..C3 - цвета баров в hex без "#".
+Все три настройки сохраняются в CONFIG_DIR/settings.json между перезапусками.
 
 Ротация экрана (LIB / STREAM 1..N) решается на хосте - Arduino просто
 рендерит то, что прислали, никакой логики выбора экрана на нём нет.
@@ -25,7 +27,7 @@ import os
 
 # Бампай эту строку при каждой значимой правке - так сразу видно в `docker logs`,
 # какая версия реально запущена, без сверки digest'ов вручную.
-SCRIPT_VERSION = "2026-07-22-3"
+SCRIPT_VERSION = "2026-07-23-2"
 import re
 import time
 import serial
@@ -51,13 +53,30 @@ ARRAY_REFRESH_SECONDS = float(os.environ.get("ARRAY_REFRESH_SECONDS", "60"))
 LIBRARY_REFRESH_SECONDS = float(os.environ.get("LIBRARY_REFRESH_SECONDS", "300"))
 SCREEN_ROTATE_SECONDS = float(os.environ.get("SCREEN_ROTATE_SECONDS", "4"))
 
+BIGCACHE_PATH = os.environ.get("BIGCACHE_PATH", "/mnt/bigcache")
+CACHE_REFRESH_SECONDS = float(os.environ.get("CACHE_REFRESH_SECONDS", "60"))
+
+CPU_TEMP_MAX_C = float(os.environ.get("CPU_TEMP_MAX_C", "90"))
+
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "1.0"))
 
 WEB_PORT = int(os.environ.get("WEB_PORT", "8189"))
 CONFIG_DIR = os.environ.get("CONFIG_DIR", "/config")
-COLORS_FILE = os.path.join(CONFIG_DIR, "colors.json")
+SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
 
-DEFAULT_COLORS = {"cpu": "FF0000", "ram": "00FF00", "net": "0000FF", "disk": "FFFF00"}
+DEFAULT_COLORS = {"bar0": "FF0000", "bar1": "00FF00", "bar2": "0000FF", "bar3": "FFFF00"}
+DEFAULT_ASSIGNMENT = {"bar0": "cpu", "bar1": "ram", "bar2": "net", "bar3": "disk"}
+DEFAULT_BRIGHTNESS = 15  # 0-100%, ~1% реального 0-255 диапазона FastLED уже безопасно для USB-питания
+
+METRICS = {
+    "cpu": "CPU",
+    "ram": "RAM",
+    "net": "NET",
+    "disk": "DISK %util",
+    "array": "Array %",
+    "cache": "BigCache %",
+    "cputemp": "CPU temp",
+}
 
 # -------------------------------------------------------------
 
@@ -67,30 +86,37 @@ from flask import Flask, request, jsonify, Response
 
 state_lock = threading.Lock()
 state = {
-    "cpu": 0, "ram": 0, "net": 0, "disk": 0,
+    "bar0": 0, "bar1": 0, "bar2": 0, "bar3": 0,
     "screen": "LIB",
     "movies": 0, "series": 0, "total_tb": 0, "free_tb": 0, "arr_pct": 0,
     "stream_idx": 0, "stream_cnt": 0, "stream_title": "", "stream_user": "", "stream_prog": 0,
     "colors": dict(DEFAULT_COLORS),
+    "assignment": dict(DEFAULT_ASSIGNMENT),
+    "brightness": DEFAULT_BRIGHTNESS,
     "serial_connected": False,
 }
 
 
-def load_colors():
+def load_settings():
     try:
-        with open(COLORS_FILE) as f:
+        with open(SETTINGS_FILE) as f:
             saved = json.load(f)
-        colors = dict(DEFAULT_COLORS)
-        colors.update(saved)
-        return colors
     except Exception:
-        return dict(DEFAULT_COLORS)
+        saved = {}
+
+    colors = dict(DEFAULT_COLORS)
+    colors.update(saved.get("colors", {}))
+    assignment = dict(DEFAULT_ASSIGNMENT)
+    assignment.update(saved.get("assignment", {}))
+    brightness = saved.get("brightness", DEFAULT_BRIGHTNESS)
+
+    return colors, assignment, brightness
 
 
-def save_colors(colors):
+def save_settings(colors, assignment, brightness):
     os.makedirs(CONFIG_DIR, exist_ok=True)
-    with open(COLORS_FILE, "w") as f:
-        json.dump(colors, f)
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump({"colors": colors, "assignment": assignment, "brightness": brightness}, f)
 
 
 # ---------------- веб-интерфейс ----------------
@@ -142,6 +168,14 @@ PAGE_HTML = """<!doctype html>
   input[type=color] { width:32px; height:24px; border:none; background:none; border-radius:6px;
                        cursor:pointer; padding:0; }
 
+  select.metric { background:#101112; color:var(--text); border:1px solid var(--border); border-radius:6px;
+                  font-size:11px; padding:3px 4px; width:100%; }
+  .brightness-row { display:flex; align-items:center; gap:12px; margin-top:20px; padding-top:18px;
+                    border-top:1px solid var(--border); }
+  .brightness-row label { font-size:12px; color:var(--muted); white-space:nowrap; }
+  .brightness-row input[type=range] { flex:1; }
+  .brightness-row .val { font-size:12px; color:var(--text); min-width:32px; text-align:right; }
+
   .oled { background:#000; color:#7fd8ff; font-family:"SF Mono",Consolas,monospace; font-size:17px;
           overflow:hidden; padding:16px; border-radius:8px; line-height:1.5; }
   .oled .line { white-space:nowrap; overflow:hidden; }
@@ -160,14 +194,27 @@ PAGE_HTML = """<!doctype html>
   <div class="card">
     <h2>SENSORS</h2>
     <div class="bars">
-      <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-cpu"></div></div>
-        <input type="color" id="color-cpu"><div class="label">CPU<br><b><span id="val-cpu"></span>%</b></div></div>
-      <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-ram"></div></div>
-        <input type="color" id="color-ram"><div class="label">RAM<br><b><span id="val-ram"></span>%</b></div></div>
-      <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-net"></div></div>
-        <input type="color" id="color-net"><div class="label">NET<br><b><span id="val-net"></span>%</b></div></div>
-      <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-disk"></div></div>
-        <input type="color" id="color-disk"><div class="label">DISK<br><b><span id="val-disk"></span>%</b></div></div>
+      <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-bar0"></div></div>
+        <input type="color" id="color-bar0">
+        <select class="metric" id="metric-bar0"></select>
+        <div class="label"><b><span id="val-bar0"></span>%</b></div></div>
+      <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-bar1"></div></div>
+        <input type="color" id="color-bar1">
+        <select class="metric" id="metric-bar1"></select>
+        <div class="label"><b><span id="val-bar1"></span>%</b></div></div>
+      <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-bar2"></div></div>
+        <input type="color" id="color-bar2">
+        <select class="metric" id="metric-bar2"></select>
+        <div class="label"><b><span id="val-bar2"></span>%</b></div></div>
+      <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-bar3"></div></div>
+        <input type="color" id="color-bar3">
+        <select class="metric" id="metric-bar3"></select>
+        <div class="label"><b><span id="val-bar3"></span>%</b></div></div>
+    </div>
+    <div class="brightness-row">
+      <label>Яркость</label>
+      <input type="range" id="brightness" min="0" max="100" value="15">
+      <span class="val" id="brightness-val">15%</span>
     </div>
   </div>
 
@@ -180,19 +227,54 @@ PAGE_HTML = """<!doctype html>
 </div>
 
 <script>
-const keys = ["cpu","ram","net","disk"];
+const bars = ["bar0","bar1","bar2","bar3"];
 let editingColor = false;
+let editingBrightness = false;
+let metricsPopulated = false;
 
-keys.forEach(k => {
+bars.forEach(k => {
   document.getElementById("color-" + k).addEventListener("input", () => editingColor = true);
   document.getElementById("color-" + k).addEventListener("change", sendColors);
+  document.getElementById("metric-" + k).addEventListener("change", sendAssignment);
+});
+
+const brightnessEl = document.getElementById("brightness");
+brightnessEl.addEventListener("input", () => {
+  editingBrightness = true;
+  document.getElementById("brightness-val").textContent = brightnessEl.value + "%";
+});
+brightnessEl.addEventListener("change", () => {
+  fetch("/api/brightness", { method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ value: parseInt(brightnessEl.value) }) })
+    .then(() => editingBrightness = false);
 });
 
 function sendColors() {
   const body = {};
-  keys.forEach(k => body[k] = document.getElementById("color-" + k).value.slice(1));
+  bars.forEach(k => body[k] = document.getElementById("color-" + k).value.slice(1));
   fetch("/api/colors", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) })
     .then(() => editingColor = false);
+}
+
+function sendAssignment() {
+  const body = {};
+  bars.forEach(k => body[k] = document.getElementById("metric-" + k).value);
+  fetch("/api/assignment", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
+}
+
+function populateMetrics(metrics, assignment) {
+  bars.forEach(k => {
+    const sel = document.getElementById("metric-" + k);
+    sel.innerHTML = "";
+    Object.entries(metrics).forEach(([id, label]) => {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = label;
+      if (id === assignment[k]) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  });
+  metricsPopulated = true;
 }
 
 function pad(s, n) { s = String(s); while (s.length < n) s += " "; return s.slice(0, n); }
@@ -235,7 +317,10 @@ function renderOled(s) {
 function refresh() {
   fetch("/api/state").then(r => r.json()).then(s => {
     document.getElementById("banner").classList.toggle("show", !s.serial_connected);
-    keys.forEach(k => {
+
+    if (!metricsPopulated) populateMetrics(s.metrics, s.assignment);
+
+    bars.forEach(k => {
       const pct = s[k];
       const color = pct >= 100 ? "#e0483e" : "#" + s.colors[k];
       document.getElementById("fill-" + k).style.height = pct + "%";
@@ -243,6 +328,12 @@ function refresh() {
       document.getElementById("val-" + k).textContent = pct;
       if (!editingColor) document.getElementById("color-" + k).value = "#" + s.colors[k];
     });
+
+    if (!editingBrightness) {
+      brightnessEl.value = s.brightness;
+      document.getElementById("brightness-val").textContent = s.brightness + "%";
+    }
+
     renderOled(s);
   });
 }
@@ -266,17 +357,39 @@ def index():
 @app.route("/api/state")
 def api_state():
     with state_lock:
-        return jsonify(dict(state))
+        d = dict(state)
+    d["metrics"] = METRICS
+    return jsonify(d)
 
 
 @app.route("/api/colors", methods=["POST"])
 def api_colors():
     body = request.get_json(force=True)
     with state_lock:
-        for k in ("cpu", "ram", "net", "disk"):
+        for k in ("bar0", "bar1", "bar2", "bar3"):
             if k in body:
                 state["colors"][k] = body[k].upper()
-        save_colors(state["colors"])
+        save_settings(state["colors"], state["assignment"], state["brightness"])
+    return jsonify({"ok": True})
+
+
+@app.route("/api/assignment", methods=["POST"])
+def api_assignment():
+    body = request.get_json(force=True)
+    with state_lock:
+        for k in ("bar0", "bar1", "bar2", "bar3"):
+            if k in body and body[k] in METRICS:
+                state["assignment"][k] = body[k]
+        save_settings(state["colors"], state["assignment"], state["brightness"])
+    return jsonify({"ok": True})
+
+
+@app.route("/api/brightness", methods=["POST"])
+def api_brightness():
+    body = request.get_json(force=True)
+    with state_lock:
+        state["brightness"] = max(0, min(100, int(body.get("value", state["brightness"]))))
+        save_settings(state["colors"], state["assignment"], state["brightness"])
     return jsonify({"ok": True})
 
 
@@ -364,6 +477,32 @@ def read_array_usage_tb():
     return total_tb, free_tb, used_pct
 
 
+def read_cache_usage_pct():
+    try:
+        st = os.statvfs(BIGCACHE_PATH)
+        total = st.f_frsize * st.f_blocks
+        free = st.f_frsize * st.f_bavail
+        return round((total - free) / total * 100) if total > 0 else 0
+    except Exception:
+        return 0
+
+
+import glob
+
+
+def read_cpu_temp_pct():
+    paths = glob.glob("/sys/class/hwmon/hwmon*/temp1_input") + ["/sys/class/thermal/thermal_zone0/temp"]
+    for p in paths:
+        try:
+            with open(p) as f:
+                milli_c = int(f.read().strip())
+            temp_c = milli_c / 1000.0
+            return max(0.0, min(100.0, temp_c / CPU_TEMP_MAX_C * 100.0))
+        except Exception:
+            continue
+    return 0.0
+
+
 # ---------- Tautulli ----------
 
 def tautulli_get(cmd, **params):
@@ -420,7 +559,10 @@ def main():
     print(f"[shkaf-hud] starting, version {SCRIPT_VERSION}", flush=True)
 
     with state_lock:
-        state["colors"] = load_colors()
+        colors, assignment, brightness = load_settings()
+        state["colors"] = colors
+        state["assignment"] = assignment
+        state["brightness"] = brightness
 
     threading.Thread(target=run_web, daemon=True).start()
 
@@ -435,8 +577,10 @@ def main():
 
     movies, series = get_library_counts()
     total_tb, free_tb, arr_pct = read_array_usage_tb()
+    cache_pct = read_cache_usage_pct()
     last_library_refresh = time.time()
     last_array_refresh = time.time()
+    last_cache_refresh = time.time()
 
     screen_index = 0
     last_screen_switch = time.time()
@@ -489,6 +633,14 @@ def main():
             total_tb, free_tb, arr_pct = read_array_usage_tb()
             last_array_refresh = now
 
+        # Кэш-пул - редко обновляем
+        if now - last_cache_refresh > CACHE_REFRESH_SECONDS:
+            cache_pct = read_cache_usage_pct()
+            last_cache_refresh = now
+
+        # CPU температура - читаем каждый тик, это дёшево (просто /sys)
+        cputemp_pct = read_cpu_temp_pct()
+
         # Активные стримы
         sessions = get_activity()
         count = len(sessions)
@@ -500,11 +652,23 @@ def main():
             screen_index = (screen_index + 1) % (count + 1)  # +1 за экран LIB
             last_screen_switch = now
 
-        common = f"CPU:{cpu_pct:.0f}|RAM:{ram_pct:.0f}|NET:{net_pct:.0f}|DISK:{disk_pct:.0f}"
+        common_metrics = {
+            "cpu": cpu_pct, "ram": ram_pct, "net": net_pct, "disk": disk_pct,
+            "array": arr_pct, "cache": cache_pct, "cputemp": cputemp_pct,
+        }
 
         with state_lock:
             colors = state["colors"]
-        color_part = f"|C0:{colors['cpu']}|C1:{colors['ram']}|C2:{colors['net']}|C3:{colors['disk']}"
+            assignment = state["assignment"]
+            brightness = state["brightness"]
+
+        bar_values = {b: round(common_metrics[assignment[b]]) for b in ("bar0", "bar1", "bar2", "bar3")}
+
+        common = (
+            f"BAR0:{bar_values['bar0']}|BAR1:{bar_values['bar1']}|"
+            f"BAR2:{bar_values['bar2']}|BAR3:{bar_values['bar3']}|BRI:{brightness}"
+        )
+        color_part = f"|C0:{colors['bar0']}|C1:{colors['bar1']}|C2:{colors['bar2']}|C3:{colors['bar3']}"
 
         # TB с точностью до сотых - Arduino парсит только целые, поэтому шлём
         # "центи-терабайты" (умноженное на 100 целое число) и делим на месте
@@ -518,7 +682,8 @@ def main():
             )
             with state_lock:
                 state.update({
-                    "cpu": round(cpu_pct), "ram": round(ram_pct), "net": round(net_pct), "disk": round(disk_pct),
+                    "bar0": bar_values["bar0"], "bar1": bar_values["bar1"],
+                    "bar2": bar_values["bar2"], "bar3": bar_values["bar3"],
                     "screen": "LIB", "movies": movies, "series": series,
                     "total_tb": total_tb, "free_tb": free_tb, "arr_pct": arr_pct,
                     "stream_cnt": 0,
@@ -531,7 +696,8 @@ def main():
             )
             with state_lock:
                 state.update({
-                    "cpu": round(cpu_pct), "ram": round(ram_pct), "net": round(net_pct), "disk": round(disk_pct),
+                    "bar0": bar_values["bar0"], "bar1": bar_values["bar1"],
+                    "bar2": bar_values["bar2"], "bar3": bar_values["bar3"],
                     "screen": "STREAM", "stream_idx": screen_index, "stream_cnt": count,
                     "stream_title": s["title"], "stream_user": s["user"], "stream_prog": s["progress"],
                 })

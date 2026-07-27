@@ -3,9 +3,9 @@
 
   Pro Micro читает по USB-serial строки вида:
 
-    CPU:57|RAM:42|NET:78|DISK:61|SCREEN:LIB|MOVIES:1243|SERIES:87|TOTC:941|FREEC:310|ARRPCT:67
+    BAR0:57|BAR1:42|BAR2:78|BAR3:61|C0:..|C1:..|C2:..|C3:..|BRI:60|SCREEN:LIB|MOVIES:1243|SERIES:87|TOTC:941|FREEC:310|ARRPCT:67
   или
-    CPU:57|RAM:42|NET:78|DISK:61|SCREEN:STREAM|IDX:1|CNT:2|TITLE:Dune Part Two|USER:konst|PROG:45
+    BAR0:57|BAR1:42|BAR2:78|BAR3:61|C0:..|C1:..|C2:..|C3:..|BRI:60|SCREEN:STREAM|IDX:1|CNT:2|TITLE:Dune Part Two|USER:konst|PROG:45
 
   Рисует:
     - WS2812: 4 бара по LEDS_PER_BAR диодов - CPU(красный) RAM(зелёный) NET(синий) DISK(жёлтый, %util)
@@ -49,10 +49,10 @@ CRGB BAR_COLOR[NUM_BARS] = { CRGB::Red, CRGB::Green, CRGB::Blue, CRGB::Yellow };
 // ПО УМОЛЧАНИЮ "как есть по порядку" - почти наверняка НЕ совпадает с реальной
 // раскладкой двух матриц. Прогони калибровку (см. выше) и поправь.
 int LED_MAP[NUM_LEDS] = {
-   0,  1,  2,  3,  4,  5,  6,  7,     // CPU  (низ -> верх)
-   8,  9, 10, 11, 12, 13, 14, 15,     // RAM
-  16, 17, 18, 19, 20, 21, 22, 23,     // NET
-  24, 25, 26, 27, 28, 29, 30, 31      // DISK
+   0,  1,  2,  3, 16, 17, 18, 19,     // бар 0 (низ -> верх)
+   7,  6,  5,  4, 23, 22, 21, 20,     // бар 1
+   8,  9, 10, 11, 24, 25, 26, 27,     // бар 2
+  15, 14, 13, 12, 31, 30, 29, 28      // бар 3
 };
 
 #define OLED_WIDTH   128
@@ -64,7 +64,8 @@ int LED_MAP[NUM_LEDS] = {
 CRGB leds[NUM_LEDS];
 Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
 
-int cpuPct = 0, ramPct = 0, netPct = 0, diskPct = 0;
+int barPct[NUM_BARS] = { 0, 0, 0, 0 };
+int brightness = BRIGHTNESS;
 
 String screenType = "LIB";           // "LIB" или "STREAM"
 int movies = 0, series = 0, totC = 0, freeC = 0, arrPct = 0;
@@ -132,10 +133,11 @@ void parseLine(const String &line) {
       String key = token.substring(0, colon);
       String val = token.substring(colon + 1);
 
-      if (key == "CPU") cpuPct = val.toInt();
-      else if (key == "RAM") ramPct = val.toInt();
-      else if (key == "NET") netPct = val.toInt();
-      else if (key == "DISK") diskPct = val.toInt();
+      if (key == "BAR0") barPct[0] = val.toInt();
+      else if (key == "BAR1") barPct[1] = val.toInt();
+      else if (key == "BAR2") barPct[2] = val.toInt();
+      else if (key == "BAR3") barPct[3] = val.toInt();
+      else if (key == "BRI") { brightness = map(val.toInt(), 0, 100, 0, 255); FastLED.setBrightness(brightness); }
       else if (key == "C0") BAR_COLOR[0] = hexToColor(val);
       else if (key == "C1") BAR_COLOR[1] = hexToColor(val);
       else if (key == "C2") BAR_COLOR[2] = hexToColor(val);
@@ -170,10 +172,10 @@ void drawOneBar(int barIndex, int pct) {
 }
 
 void drawBars() {
-  drawOneBar(0, cpuPct);
-  drawOneBar(1, ramPct);
-  drawOneBar(2, netPct);
-  drawOneBar(3, diskPct);
+  drawOneBar(0, barPct[0]);
+  drawOneBar(1, barPct[1]);
+  drawOneBar(2, barPct[2]);
+  drawOneBar(3, barPct[3]);
   FastLED.show();
 }
 
