@@ -138,6 +138,7 @@ void parseLine(const String &line) {
       else if (key == "BAR2") barPct[2] = val.toInt();
       else if (key == "BAR3") barPct[3] = val.toInt();
       else if (key == "BRI") { brightness = map(val.toInt(), 0, 100, 0, 255); FastLED.setBrightness(brightness); }
+      else if (key == "GRAD") gradientMode = (val.toInt() == 1);
       else if (key == "C0") BAR_COLOR[0] = hexToColor(val);
       else if (key == "C1") BAR_COLOR[1] = hexToColor(val);
       else if (key == "C2") BAR_COLOR[2] = hexToColor(val);
@@ -160,6 +161,16 @@ void parseLine(const String &line) {
 
 // ---------------- LED бары ----------------
 
+bool gradientMode = false;
+
+// градиент по позиции в баре: низ (level0) - зелёный, верх (последний level) - красный
+CRGB gradientColorForLevel(int level) {
+  float frac = (float)level / (LEDS_PER_BAR - 1);
+  uint8_t r = round(frac * 255);
+  uint8_t g = round((1.0 - frac) * 255);
+  return CRGB(r, g, 0);
+}
+
 void drawOneBar(int barIndex, int pct) {
   int lit = round(pct / 100.0 * LEDS_PER_BAR);
   lit = constrain(lit, 0, LEDS_PER_BAR);
@@ -167,7 +178,14 @@ void drawOneBar(int barIndex, int pct) {
   for (int level = 0; level < LEDS_PER_BAR; level++) {
     int logicalPos = barIndex * LEDS_PER_BAR + level;
     int rawIndex = LED_MAP[logicalPos];
-    leds[rawIndex] = (level < lit) ? (pct >= 100 ? CRGB::Red : BAR_COLOR[barIndex]) : CRGB::Black;
+
+    if (level >= lit) {
+      leds[rawIndex] = CRGB::Black;
+    } else if (gradientMode) {
+      leds[rawIndex] = gradientColorForLevel(level);
+    } else {
+      leds[rawIndex] = (pct >= 100) ? CRGB::Red : BAR_COLOR[barIndex];
+    }
   }
 }
 

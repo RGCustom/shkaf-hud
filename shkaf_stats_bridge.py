@@ -6,9 +6,9 @@ shkaf_stats_bridge.py  (контейнер: shkaf-hud)
 через Tautulli, шлёт по USB-serial на Pro Micro одну строку за тик.
 
 Формат строки (pipe-delimited, \n в конце), общие поля есть всегда:
-    BAR0:<0-100>|BAR1:<0-100>|BAR2:<0-100>|BAR3:<0-100>|BRI:<0-100>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:LIB|MOVIES:<n>|SERIES:<n>|TOTC:<TBx100>|FREEC:<TBx100>|ARRPCT:<0-100>
+    BAR0:<0-100>|BAR1:<0-100>|BAR2:<0-100>|BAR3:<0-100>|BRI:<0-100>|GRAD:<0|1>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:LIB|MOVIES:<n>|SERIES:<n>|TOTC:<TBx100>|FREEC:<TBx100>|ARRPCT:<0-100>
 или
-    BAR0:<0-100>|BAR1:<0-100>|BAR2:<0-100>|BAR3:<0-100>|BRI:<0-100>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:STREAM|IDX:<n>|CNT:<n>|TITLE:<...>|USER:<...>|PROG:<0-100>
+    BAR0:<0-100>|BAR1:<0-100>|BAR2:<0-100>|BAR3:<0-100>|BRI:<0-100>|GRAD:<0|1>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:STREAM|IDX:<n>|CNT:<n>|TITLE:<...>|USER:<...>|PROG:<0-100>
 
 BAR0..BAR3 - значение каждого физического бара (0-100%), метрика для каждого
 бара выбирается в веб-интерфейсе (CPU/RAM/NET/DISK %util/Array %/Cache %/CPU temp).
@@ -27,7 +27,7 @@ import os
 
 # Бампай эту строку при каждой значимой правке - так сразу видно в `docker logs`,
 # какая версия реально запущена, без сверки digest'ов вручную.
-SCRIPT_VERSION = "2026-07-23-2"
+SCRIPT_VERSION = "2026-07-23-3"
 import re
 import time
 import serial
@@ -67,6 +67,7 @@ SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
 DEFAULT_COLORS = {"bar0": "FF0000", "bar1": "00FF00", "bar2": "0000FF", "bar3": "FFFF00"}
 DEFAULT_ASSIGNMENT = {"bar0": "cpu", "bar1": "ram", "bar2": "net", "bar3": "disk"}
 DEFAULT_BRIGHTNESS = 15  # 0-100%, ~1% реального 0-255 диапазона FastLED уже безопасно для USB-питания
+DEFAULT_GRADIENT = False  # False = фиксированный цвет + красный на 100%, True = градиент зелёный->красный
 
 METRICS = {
     "cpu": "CPU",
@@ -93,6 +94,7 @@ state = {
     "colors": dict(DEFAULT_COLORS),
     "assignment": dict(DEFAULT_ASSIGNMENT),
     "brightness": DEFAULT_BRIGHTNESS,
+    "gradient": DEFAULT_GRADIENT,
     "serial_connected": False,
 }
 
@@ -109,14 +111,15 @@ def load_settings():
     assignment = dict(DEFAULT_ASSIGNMENT)
     assignment.update(saved.get("assignment", {}))
     brightness = saved.get("brightness", DEFAULT_BRIGHTNESS)
+    gradient = saved.get("gradient", DEFAULT_GRADIENT)
 
-    return colors, assignment, brightness
+    return colors, assignment, brightness, gradient
 
 
-def save_settings(colors, assignment, brightness):
+def save_settings(colors, assignment, brightness, gradient):
     os.makedirs(CONFIG_DIR, exist_ok=True)
     with open(SETTINGS_FILE, "w") as f:
-        json.dump({"colors": colors, "assignment": assignment, "brightness": brightness}, f)
+        json.dump({"colors": colors, "assignment": assignment, "brightness": brightness, "gradient": gradient}, f)
 
 
 # ---------------- веб-интерфейс ----------------
@@ -216,6 +219,10 @@ PAGE_HTML = """<!doctype html>
       <input type="range" id="brightness" min="0" max="100" value="15">
       <span class="val" id="brightness-val">15%</span>
     </div>
+    <div class="brightness-row">
+      <label>Градиент 0→100%</label>
+      <input type="checkbox" id="gradient">
+    </div>
   </div>
 
   <div class="card">
@@ -247,6 +254,16 @@ brightnessEl.addEventListener("change", () => {
   fetch("/api/brightness", { method: "POST", headers: {"Content-Type":"application/json"},
     body: JSON.stringify({ value: parseInt(brightnessEl.value) }) })
     .then(() => editingBrightness = false);
+});
+
+const gradientEl = document.getElementById("gradient");
+let editingGradient = false;
+gradientEl.addEventListener("change", () => {
+  editingGradient = true;
+  bars.forEach(k => document.getElementById("color-" + k).disabled = gradientEl.checked);
+  fetch("/api/gradient", { method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ value: gradientEl.checked }) })
+    .then(() => editingGradient = false);
 });
 
 function sendColors() {
@@ -320,11 +337,22 @@ function refresh() {
 
     if (!metricsPopulated) populateMetrics(s.metrics, s.assignment);
 
+    if (!editingGradient) {
+      gradientEl.checked = s.gradient;
+      bars.forEach(k => document.getElementById("color-" + k).disabled = s.gradient);
+    }
+
     bars.forEach(k => {
       const pct = s[k];
-      const color = pct >= 100 ? "#e0483e" : "#" + s.colors[k];
-      document.getElementById("fill-" + k).style.height = pct + "%";
-      document.getElementById("fill-" + k).style.background = color;
+      const fill = document.getElementById("fill-" + k);
+      if (s.gradient) {
+        fill.style.background = "linear-gradient(to top, #00ff00, #ff0000)";
+        fill.style.backgroundSize = "100% 130px";
+        fill.style.backgroundPosition = "bottom";
+      } else {
+        fill.style.background = pct >= 100 ? "#e0483e" : "#" + s.colors[k];
+      }
+      fill.style.height = pct + "%";
       document.getElementById("val-" + k).textContent = pct;
       if (!editingColor) document.getElementById("color-" + k).value = "#" + s.colors[k];
     });
@@ -369,7 +397,7 @@ def api_colors():
         for k in ("bar0", "bar1", "bar2", "bar3"):
             if k in body:
                 state["colors"][k] = body[k].upper()
-        save_settings(state["colors"], state["assignment"], state["brightness"])
+        save_settings(state["colors"], state["assignment"], state["brightness"], state["gradient"])
     return jsonify({"ok": True})
 
 
@@ -380,7 +408,7 @@ def api_assignment():
         for k in ("bar0", "bar1", "bar2", "bar3"):
             if k in body and body[k] in METRICS:
                 state["assignment"][k] = body[k]
-        save_settings(state["colors"], state["assignment"], state["brightness"])
+        save_settings(state["colors"], state["assignment"], state["brightness"], state["gradient"])
     return jsonify({"ok": True})
 
 
@@ -389,7 +417,16 @@ def api_brightness():
     body = request.get_json(force=True)
     with state_lock:
         state["brightness"] = max(0, min(100, int(body.get("value", state["brightness"]))))
-        save_settings(state["colors"], state["assignment"], state["brightness"])
+        save_settings(state["colors"], state["assignment"], state["brightness"], state["gradient"])
+    return jsonify({"ok": True})
+
+
+@app.route("/api/gradient", methods=["POST"])
+def api_gradient():
+    body = request.get_json(force=True)
+    with state_lock:
+        state["gradient"] = bool(body.get("value", state["gradient"]))
+        save_settings(state["colors"], state["assignment"], state["brightness"], state["gradient"])
     return jsonify({"ok": True})
 
 
@@ -399,8 +436,31 @@ def run_web():
 DISK_NAME_RE = re.compile(r"^(sd[a-z]+|nvme\d+n\d+)$")
 
 
+TRANSLIT_MAP = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "h", "ц": "c", "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "",
+    "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+
+
+def transliterate(s: str) -> str:
+    """Кириллица -> латиница - OLED-шрифт (Adafruit_GFX стандартный) не знает кириллицу вообще."""
+    out = []
+    for ch in s:
+        lower = ch.lower()
+        if lower in TRANSLIT_MAP:
+            rep = TRANSLIT_MAP[lower]
+            out.append(rep.capitalize() if ch.isupper() and rep else rep)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def sanitize(s: str) -> str:
-    return (s or "").replace("|", "/").replace("\n", " ").replace("\r", "")[:48]
+    s = transliterate(s or "")
+    return s.replace("|", "/").replace("\n", " ").replace("\r", "")[:48]
 
 
 # ---------- CPU / RAM / NET ----------
@@ -559,10 +619,11 @@ def main():
     print(f"[shkaf-hud] starting, version {SCRIPT_VERSION}", flush=True)
 
     with state_lock:
-        colors, assignment, brightness = load_settings()
+        colors, assignment, brightness, gradient = load_settings()
         state["colors"] = colors
         state["assignment"] = assignment
         state["brightness"] = brightness
+        state["gradient"] = gradient
 
     threading.Thread(target=run_web, daemon=True).start()
 
@@ -661,12 +722,13 @@ def main():
             colors = state["colors"]
             assignment = state["assignment"]
             brightness = state["brightness"]
+            gradient = state["gradient"]
 
         bar_values = {b: round(common_metrics[assignment[b]]) for b in ("bar0", "bar1", "bar2", "bar3")}
 
         common = (
             f"BAR0:{bar_values['bar0']}|BAR1:{bar_values['bar1']}|"
-            f"BAR2:{bar_values['bar2']}|BAR3:{bar_values['bar3']}|BRI:{brightness}"
+            f"BAR2:{bar_values['bar2']}|BAR3:{bar_values['bar3']}|BRI:{brightness}|GRAD:{1 if gradient else 0}"
         )
         color_part = f"|C0:{colors['bar0']}|C1:{colors['bar1']}|C2:{colors['bar2']}|C3:{colors['bar3']}"
 
