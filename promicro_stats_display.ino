@@ -3,9 +3,9 @@
 
   Pro Micro читает по USB-serial строки вида:
 
-    BAR0:57|BAR1:42|BAR2:78|BAR3:61|C0:..|C1:..|C2:..|C3:..|BRI:60|SCREEN:LIB|MOVIES:1243|SERIES:87|TOTC:941|FREEC:310|ARRPCT:67
+    BAR0:57|BAR1:42|BAR2:78|BAR3:61|C0:..|C1:..|C2:..|C3:..|BRI:60|G0:0|G1:1|G2:0|G3:0|SCREEN:LIB|MOVIES:1243|SERIES:87|TOTC:941|FREEC:310|ARRPCT:67
   или
-    BAR0:57|BAR1:42|BAR2:78|BAR3:61|C0:..|C1:..|C2:..|C3:..|BRI:60|SCREEN:STREAM|IDX:1|CNT:2|TITLE:Dune Part Two|USER:konst|PROG:45
+    BAR0:57|BAR1:42|BAR2:78|BAR3:61|C0:..|C1:..|C2:..|C3:..|BRI:60|G0:0|G1:1|G2:0|G3:0|SCREEN:STREAM|IDX:1|CNT:2|TITLE:Dune Part Two|USER:konst|PROG:45
 
   Рисует:
     - WS2812: 4 бара по LEDS_PER_BAR диодов - CPU(красный) RAM(зелёный) NET(синий) DISK(жёлтый, %util)
@@ -66,6 +66,7 @@ Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
 
 int barPct[NUM_BARS] = { 0, 0, 0, 0 };
 int brightness = BRIGHTNESS;
+bool gradientMode[NUM_BARS] = { false, false, false, false };
 
 String screenType = "LIB";           // "LIB" или "STREAM"
 int movies = 0, series = 0, totC = 0, freeC = 0, arrPct = 0;
@@ -138,7 +139,10 @@ void parseLine(const String &line) {
       else if (key == "BAR2") barPct[2] = val.toInt();
       else if (key == "BAR3") barPct[3] = val.toInt();
       else if (key == "BRI") { brightness = map(val.toInt(), 0, 100, 0, 255); FastLED.setBrightness(brightness); }
-      else if (key == "GRAD") gradientMode = (val.toInt() == 1);
+      else if (key == "G0") gradientMode[0] = (val.toInt() == 1);
+      else if (key == "G1") gradientMode[1] = (val.toInt() == 1);
+      else if (key == "G2") gradientMode[2] = (val.toInt() == 1);
+      else if (key == "G3") gradientMode[3] = (val.toInt() == 1);
       else if (key == "C0") BAR_COLOR[0] = hexToColor(val);
       else if (key == "C1") BAR_COLOR[1] = hexToColor(val);
       else if (key == "C2") BAR_COLOR[2] = hexToColor(val);
@@ -161,14 +165,14 @@ void parseLine(const String &line) {
 
 // ---------------- LED бары ----------------
 
-bool gradientMode = false;
-
-// градиент по позиции в баре: низ (level0) - зелёный, верх (последний level) - красный
+// градиент по позиции в баре: низ (level0) - зелёный, верх (последний level) - красный.
+// Специально через HSV с фиксированными saturation/value (255/255) - так все диоды
+// одинаково яркие и переход идёт через жёлтый/оранжевый, а не через тусклую середину,
+// как получалось при прямой линейной интерполяции RGB-каналов.
 CRGB gradientColorForLevel(int level) {
   float frac = (float)level / (LEDS_PER_BAR - 1);
-  uint8_t r = round(frac * 255);
-  uint8_t g = round((1.0 - frac) * 255);
-  return CRGB(r, g, 0);
+  uint8_t hue = round(96 * (1.0 - frac));  // 96=зелёный -> 0=красный по кругу FastLED HSV
+  return CHSV(hue, 255, 255);
 }
 
 void drawOneBar(int barIndex, int pct) {
@@ -181,7 +185,7 @@ void drawOneBar(int barIndex, int pct) {
 
     if (level >= lit) {
       leds[rawIndex] = CRGB::Black;
-    } else if (gradientMode) {
+    } else if (gradientMode[barIndex]) {
       leds[rawIndex] = gradientColorForLevel(level);
     } else {
       leds[rawIndex] = (pct >= 100) ? CRGB::Red : BAR_COLOR[barIndex];

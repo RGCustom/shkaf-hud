@@ -6,9 +6,9 @@ shkaf_stats_bridge.py  (контейнер: shkaf-hud)
 через Tautulli, шлёт по USB-serial на Pro Micro одну строку за тик.
 
 Формат строки (pipe-delimited, \n в конце), общие поля есть всегда:
-    BAR0:<0-100>|BAR1:<0-100>|BAR2:<0-100>|BAR3:<0-100>|BRI:<0-100>|GRAD:<0|1>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:LIB|MOVIES:<n>|SERIES:<n>|TOTC:<TBx100>|FREEC:<TBx100>|ARRPCT:<0-100>
+    BAR0:<0-100>|BAR1:<0-100>|BAR2:<0-100>|BAR3:<0-100>|BRI:<0-100>|G0:<0|1>|G1:<0|1>|G2:<0|1>|G3:<0|1>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:LIB|MOVIES:<n>|SERIES:<n>|TOTC:<TBx100>|FREEC:<TBx100>|ARRPCT:<0-100>
 или
-    BAR0:<0-100>|BAR1:<0-100>|BAR2:<0-100>|BAR3:<0-100>|BRI:<0-100>|GRAD:<0|1>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:STREAM|IDX:<n>|CNT:<n>|TITLE:<...>|USER:<...>|PROG:<0-100>
+    BAR0:<0-100>|BAR1:<0-100>|BAR2:<0-100>|BAR3:<0-100>|BRI:<0-100>|G0:<0|1>|G1:<0|1>|G2:<0|1>|G3:<0|1>|C0:<hex>|C1:<hex>|C2:<hex>|C3:<hex>|SCREEN:STREAM|IDX:<n>|CNT:<n>|TITLE:<...>|USER:<...>|PROG:<0-100>
 
 BAR0..BAR3 - значение каждого физического бара (0-100%), метрика для каждого
 бара выбирается в веб-интерфейсе (CPU/RAM/NET/DISK %util/Array %/Cache %/CPU temp).
@@ -27,7 +27,7 @@ import os
 
 # Бампай эту строку при каждой значимой правке - так сразу видно в `docker logs`,
 # какая версия реально запущена, без сверки digest'ов вручную.
-SCRIPT_VERSION = "2026-07-23-3"
+SCRIPT_VERSION = "2026-07-23-4"
 import re
 import time
 import serial
@@ -67,7 +67,7 @@ SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
 DEFAULT_COLORS = {"bar0": "FF0000", "bar1": "00FF00", "bar2": "0000FF", "bar3": "FFFF00"}
 DEFAULT_ASSIGNMENT = {"bar0": "cpu", "bar1": "ram", "bar2": "net", "bar3": "disk"}
 DEFAULT_BRIGHTNESS = 15  # 0-100%, ~1% реального 0-255 диапазона FastLED уже безопасно для USB-питания
-DEFAULT_GRADIENT = False  # False = фиксированный цвет + красный на 100%, True = градиент зелёный->красный
+DEFAULT_GRADIENT = {"bar0": False, "bar1": False, "bar2": False, "bar3": False}  # per-bar: False = цвет+красный на 100%, True = градиент
 
 METRICS = {
     "cpu": "CPU",
@@ -94,7 +94,7 @@ state = {
     "colors": dict(DEFAULT_COLORS),
     "assignment": dict(DEFAULT_ASSIGNMENT),
     "brightness": DEFAULT_BRIGHTNESS,
-    "gradient": DEFAULT_GRADIENT,
+    "gradient": dict(DEFAULT_GRADIENT),
     "serial_connected": False,
 }
 
@@ -111,7 +111,8 @@ def load_settings():
     assignment = dict(DEFAULT_ASSIGNMENT)
     assignment.update(saved.get("assignment", {}))
     brightness = saved.get("brightness", DEFAULT_BRIGHTNESS)
-    gradient = saved.get("gradient", DEFAULT_GRADIENT)
+    gradient = dict(DEFAULT_GRADIENT)
+    gradient.update(saved.get("gradient", {}))
 
     return colors, assignment, brightness, gradient
 
@@ -173,6 +174,8 @@ PAGE_HTML = """<!doctype html>
 
   select.metric { background:#101112; color:var(--text); border:1px solid var(--border); border-radius:6px;
                   font-size:11px; padding:3px 4px; width:100%; }
+  .grad-label { font-size:10px; color:var(--muted); display:flex; align-items:center; gap:4px; white-space:nowrap; }
+  .grad-label input { width:12px; height:12px; margin:0; }
   .brightness-row { display:flex; align-items:center; gap:12px; margin-top:20px; padding-top:18px;
                     border-top:1px solid var(--border); }
   .brightness-row label { font-size:12px; color:var(--muted); white-space:nowrap; }
@@ -200,28 +203,28 @@ PAGE_HTML = """<!doctype html>
       <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-bar0"></div></div>
         <input type="color" id="color-bar0">
         <select class="metric" id="metric-bar0"></select>
+        <label class="grad-label"><input type="checkbox" id="gradient-bar0"> градиент</label>
         <div class="label"><b><span id="val-bar0"></span>%</b></div></div>
       <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-bar1"></div></div>
         <input type="color" id="color-bar1">
         <select class="metric" id="metric-bar1"></select>
+        <label class="grad-label"><input type="checkbox" id="gradient-bar1"> градиент</label>
         <div class="label"><b><span id="val-bar1"></span>%</b></div></div>
       <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-bar2"></div></div>
         <input type="color" id="color-bar2">
         <select class="metric" id="metric-bar2"></select>
+        <label class="grad-label"><input type="checkbox" id="gradient-bar2"> градиент</label>
         <div class="label"><b><span id="val-bar2"></span>%</b></div></div>
       <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-bar3"></div></div>
         <input type="color" id="color-bar3">
         <select class="metric" id="metric-bar3"></select>
+        <label class="grad-label"><input type="checkbox" id="gradient-bar3"> градиент</label>
         <div class="label"><b><span id="val-bar3"></span>%</b></div></div>
     </div>
     <div class="brightness-row">
       <label>Яркость</label>
       <input type="range" id="brightness" min="0" max="100" value="15">
       <span class="val" id="brightness-val">15%</span>
-    </div>
-    <div class="brightness-row">
-      <label>Градиент 0→100%</label>
-      <input type="checkbox" id="gradient">
     </div>
   </div>
 
@@ -256,14 +259,16 @@ brightnessEl.addEventListener("change", () => {
     .then(() => editingBrightness = false);
 });
 
-const gradientEl = document.getElementById("gradient");
-let editingGradient = false;
-gradientEl.addEventListener("change", () => {
-  editingGradient = true;
-  bars.forEach(k => document.getElementById("color-" + k).disabled = gradientEl.checked);
-  fetch("/api/gradient", { method: "POST", headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ value: gradientEl.checked }) })
-    .then(() => editingGradient = false);
+let editingGradient = {};
+bars.forEach(k => {
+  const el = document.getElementById("gradient-" + k);
+  el.addEventListener("change", () => {
+    editingGradient[k] = true;
+    document.getElementById("color-" + k).disabled = el.checked;
+    fetch("/api/gradient", { method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ [k]: el.checked }) })
+      .then(() => editingGradient[k] = false);
+  });
 });
 
 function sendColors() {
@@ -337,15 +342,17 @@ function refresh() {
 
     if (!metricsPopulated) populateMetrics(s.metrics, s.assignment);
 
-    if (!editingGradient) {
-      gradientEl.checked = s.gradient;
-      bars.forEach(k => document.getElementById("color-" + k).disabled = s.gradient);
-    }
-
     bars.forEach(k => {
       const pct = s[k];
       const fill = document.getElementById("fill-" + k);
-      if (s.gradient) {
+      const isGrad = s.gradient[k];
+
+      if (!editingGradient[k]) {
+        document.getElementById("gradient-" + k).checked = isGrad;
+        document.getElementById("color-" + k).disabled = isGrad;
+      }
+
+      if (isGrad) {
         fill.style.background = "linear-gradient(to top, #00ff00, #ff0000)";
         fill.style.backgroundSize = "100% 130px";
         fill.style.backgroundPosition = "bottom";
@@ -425,7 +432,9 @@ def api_brightness():
 def api_gradient():
     body = request.get_json(force=True)
     with state_lock:
-        state["gradient"] = bool(body.get("value", state["gradient"]))
+        for k in ("bar0", "bar1", "bar2", "bar3"):
+            if k in body:
+                state["gradient"][k] = bool(body[k])
         save_settings(state["colors"], state["assignment"], state["brightness"], state["gradient"])
     return jsonify({"ok": True})
 
@@ -726,9 +735,11 @@ def main():
 
         bar_values = {b: round(common_metrics[assignment[b]]) for b in ("bar0", "bar1", "bar2", "bar3")}
 
+        grad_part = "|".join(f"G{i}:{1 if gradient[f'bar{i}'] else 0}" for i in range(4))
+
         common = (
             f"BAR0:{bar_values['bar0']}|BAR1:{bar_values['bar1']}|"
-            f"BAR2:{bar_values['bar2']}|BAR3:{bar_values['bar3']}|BRI:{brightness}|GRAD:{1 if gradient else 0}"
+            f"BAR2:{bar_values['bar2']}|BAR3:{bar_values['bar3']}|BRI:{brightness}|{grad_part}"
         )
         color_part = f"|C0:{colors['bar0']}|C1:{colors['bar1']}|C2:{colors['bar2']}|C3:{colors['bar3']}"
 
