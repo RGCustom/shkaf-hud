@@ -27,7 +27,7 @@ import os
 
 # Бампай эту строку при каждой значимой правке - так сразу видно в `docker logs`,
 # какая версия реально запущена, без сверки digest'ов вручную.
-SCRIPT_VERSION = "2026-07-23-4"
+SCRIPT_VERSION = "2026-07-23-5"
 import re
 import time
 import serial
@@ -112,7 +112,11 @@ def load_settings():
     assignment.update(saved.get("assignment", {}))
     brightness = saved.get("brightness", DEFAULT_BRIGHTNESS)
     gradient = dict(DEFAULT_GRADIENT)
-    gradient.update(saved.get("gradient", {}))
+    saved_gradient = saved.get("gradient", {})
+    if isinstance(saved_gradient, dict):
+        gradient.update(saved_gradient)
+    # если в settings.json старый формат (одно bool-значение на всё) - просто
+    # игнорируем и остаёмся на дефолтах, ничего страшного
 
     return colors, assignment, brightness, gradient
 
