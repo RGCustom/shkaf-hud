@@ -3,12 +3,14 @@
 
   Pro Micro читает по USB-serial строки вида:
 
-    BAR0:57|BAR1:42|BAR2:78|BAR3:61|C0:..|C1:..|C2:..|C3:..|BRI:60|G0:0|G1:1|G2:0|G3:0|SCREEN:LIB|MOVIES:1243|SERIES:87|TOTC:941|FREEC:310|ARRPCT:67
+    BAR0:57|BAR1:42|BAR2:78|BAR3:61|C01:..|C02:..|C03:..|C11:..|C12:..|C13:..|C21:..|C22:..|C23:..|C31:..|C32:..|C33:..|BRI:60|G0:0|G1:1|G2:0|G3:0|SCREEN:LIB|MOVIES:1243|SERIES:87|TOTC:941|FREEC:310|ARRPCT:67
   или
-    BAR0:57|BAR1:42|BAR2:78|BAR3:61|C0:..|C1:..|C2:..|C3:..|BRI:60|G0:0|G1:1|G2:0|G3:0|SCREEN:STREAM|IDX:1|CNT:2|TITLE:Dune Part Two|USER:konst|PROG:45
+    BAR0:57|BAR1:42|BAR2:78|BAR3:61|C01:..|C02:..|C03:..|C11:..|C12:..|C13:..|C21:..|C22:..|C23:..|C31:..|C32:..|C33:..|BRI:60|G0:0|G1:1|G2:0|G3:0|SCREEN:STREAM|IDX:1|CNT:2|TITLE:Dune Part Two|USER:konst|PROG:45
 
   Рисует:
-    - WS2812: 4 бара по LEDS_PER_BAR диодов - CPU(красный) RAM(зелёный) NET(синий) DISK(жёлтый, %util)
+    - WS2812: 4 бара по LEDS_PER_BAR диодов, каждый - 3-стопный градиент (c1 0% -> c2 50% -> c3 100%),
+      настраивается через веб-интерфейс контейнера. G0-G3 - если 1, при pct>=100 вся полоска
+      заливается c3 (цветом "на 100%") вместо градиента.
     - OLED (SSD1306, крупный шрифт): либо экран библиотеки (LIB), либо текущий поток (STREAM)
 
   Вся логика "что сейчас показывать" (LIB или который STREAM) решается на хосте -
@@ -43,7 +45,14 @@
 #define NUM_LEDS       (LEDS_PER_BAR * NUM_BARS)       // 32
 #define BRIGHTNESS     60
 
-CRGB BAR_COLOR[NUM_BARS] = { CRGB::Red, CRGB::Green, CRGB::Blue, CRGB::Yellow };  // дефолты, тут же обновляются из C0..C3
+// barColors[bar][0..2] = c1(0%), c2(50%), c3(100%) - дефолты зелёный->жёлтый->красный,
+// тут же обновляются из C{bar}{1..3} по serial
+CRGB barColors[NUM_BARS][3] = {
+  { CRGB(0x00, 0xFF, 0x42), CRGB(0xFF, 0xF6, 0x00), CRGB(0xFF, 0x00, 0x00) },
+  { CRGB(0x00, 0xFF, 0x42), CRGB(0xFF, 0xF6, 0x00), CRGB(0xFF, 0x00, 0x00) },
+  { CRGB(0x00, 0xFF, 0x42), CRGB(0xFF, 0xF6, 0x00), CRGB(0xFF, 0x00, 0x00) },
+  { CRGB(0x00, 0xFF, 0x42), CRGB(0xFF, 0xF6, 0x00), CRGB(0xFF, 0x00, 0x00) },
+};
 
 // LED_MAP[логическая позиция] = сырой индекс в цепочке FastLED.
 // ПО УМОЛЧАНИЮ "как есть по порядку" - почти наверняка НЕ совпадает с реальной
@@ -66,7 +75,7 @@ Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
 
 int barPct[NUM_BARS] = { 0, 0, 0, 0 };
 int brightness = BRIGHTNESS;
-bool gradientMode[NUM_BARS] = { false, false, false, false };
+bool solid100[NUM_BARS] = { false, false, false, false };  // true = вся полоска заливается c3, когда pct>=100
 
 String screenType = "LIB";           // "LIB" или "STREAM"
 int movies = 0, series = 0, totC = 0, freeC = 0, arrPct = 0;
@@ -139,14 +148,22 @@ void parseLine(const String &line) {
       else if (key == "BAR2") barPct[2] = val.toInt();
       else if (key == "BAR3") barPct[3] = val.toInt();
       else if (key == "BRI") { brightness = map(val.toInt(), 0, 100, 0, 255); FastLED.setBrightness(brightness); }
-      else if (key == "G0") gradientMode[0] = (val.toInt() == 1);
-      else if (key == "G1") gradientMode[1] = (val.toInt() == 1);
-      else if (key == "G2") gradientMode[2] = (val.toInt() == 1);
-      else if (key == "G3") gradientMode[3] = (val.toInt() == 1);
-      else if (key == "C0") BAR_COLOR[0] = hexToColor(val);
-      else if (key == "C1") BAR_COLOR[1] = hexToColor(val);
-      else if (key == "C2") BAR_COLOR[2] = hexToColor(val);
-      else if (key == "C3") BAR_COLOR[3] = hexToColor(val);
+      else if (key == "G0") solid100[0] = (val.toInt() == 1);
+      else if (key == "G1") solid100[1] = (val.toInt() == 1);
+      else if (key == "G2") solid100[2] = (val.toInt() == 1);
+      else if (key == "G3") solid100[3] = (val.toInt() == 1);
+      else if (key == "C01") barColors[0][0] = hexToColor(val);
+      else if (key == "C02") barColors[0][1] = hexToColor(val);
+      else if (key == "C03") barColors[0][2] = hexToColor(val);
+      else if (key == "C11") barColors[1][0] = hexToColor(val);
+      else if (key == "C12") barColors[1][1] = hexToColor(val);
+      else if (key == "C13") barColors[1][2] = hexToColor(val);
+      else if (key == "C21") barColors[2][0] = hexToColor(val);
+      else if (key == "C22") barColors[2][1] = hexToColor(val);
+      else if (key == "C23") barColors[2][2] = hexToColor(val);
+      else if (key == "C31") barColors[3][0] = hexToColor(val);
+      else if (key == "C32") barColors[3][1] = hexToColor(val);
+      else if (key == "C33") barColors[3][2] = hexToColor(val);
       else if (key == "SCREEN") screenType = val;
       else if (key == "MOVIES") movies = val.toInt();
       else if (key == "SERIES") series = val.toInt();
@@ -165,14 +182,18 @@ void parseLine(const String &line) {
 
 // ---------------- LED бары ----------------
 
-// градиент по позиции в баре: низ (level0) - зелёный, верх (последний level) - красный.
-// Специально через HSV с фиксированными saturation/value (255/255) - так все диоды
-// одинаково яркие и переход идёт через жёлтый/оранжевый, а не через тусклую середину,
-// как получалось при прямой линейной интерполяции RGB-каналов.
-CRGB gradientColorForLevel(int level) {
+// градиент по позиции в баре: 3 пользовательских стопа c1(0%)->c2(50%)->c3(100%),
+// интерполяция через FastLED blend() - между соседними стопами (не через HSV, тут яркость
+// не проседает сама по себе, если стопы выбраны разумно, зато можно задать любые цвета)
+CRGB gradientColorForLevel(int barIndex, int level) {
   float frac = (float)level / (LEDS_PER_BAR - 1);
-  uint8_t hue = round(96 * (1.0 - frac));  // 96=зелёный -> 0=красный по кругу FastLED HSV
-  return CHSV(hue, 255, 255);
+  if (frac <= 0.5) {
+    uint8_t amount = round((frac / 0.5) * 255);
+    return blend(barColors[barIndex][0], barColors[barIndex][1], amount);
+  } else {
+    uint8_t amount = round(((frac - 0.5) / 0.5) * 255);
+    return blend(barColors[barIndex][1], barColors[barIndex][2], amount);
+  }
 }
 
 void drawOneBar(int barIndex, int pct) {
@@ -185,10 +206,10 @@ void drawOneBar(int barIndex, int pct) {
 
     if (level >= lit) {
       leds[rawIndex] = CRGB::Black;
-    } else if (gradientMode[barIndex]) {
-      leds[rawIndex] = gradientColorForLevel(level);
+    } else if (solid100[barIndex] && pct >= 100) {
+      leds[rawIndex] = barColors[barIndex][2];  // c3 - цвет "на 100%"
     } else {
-      leds[rawIndex] = (pct >= 100) ? CRGB::Red : BAR_COLOR[barIndex];
+      leds[rawIndex] = gradientColorForLevel(barIndex, level);
     }
   }
 }

@@ -24,10 +24,11 @@ C0..C3 - цвета баров в hex без "#".
 """
 
 import os
+import copy
 
 # Бампай эту строку при каждой значимой правке - так сразу видно в `docker logs`,
 # какая версия реально запущена, без сверки digest'ов вручную.
-SCRIPT_VERSION = "2026-07-23-5"
+SCRIPT_VERSION = "2026-07-23-7"
 import re
 import time
 import serial
@@ -64,10 +65,17 @@ WEB_PORT = int(os.environ.get("WEB_PORT", "8189"))
 CONFIG_DIR = os.environ.get("CONFIG_DIR", "/config")
 SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
 
-DEFAULT_COLORS = {"bar0": "FF0000", "bar1": "00FF00", "bar2": "0000FF", "bar3": "FFFF00"}
+DEFAULT_COLORS = {
+    "bar0": {"c1": "00FF42", "c2": "FFF600", "c3": "FF0000"},
+    "bar1": {"c1": "00FF42", "c2": "FFF600", "c3": "FF0000"},
+    "bar2": {"c1": "00FF42", "c2": "FFF600", "c3": "FF0000"},
+    "bar3": {"c1": "00FF42", "c2": "FFF600", "c3": "FF0000"},
+}  # c1=0%, c2=50%, c3=100% - три стопа градиента для каждого бара
 DEFAULT_ASSIGNMENT = {"bar0": "cpu", "bar1": "ram", "bar2": "net", "bar3": "disk"}
 DEFAULT_BRIGHTNESS = 15  # 0-100%, ~1% реального 0-255 диапазона FastLED уже безопасно для USB-питания
-DEFAULT_GRADIENT = {"bar0": False, "bar1": False, "bar2": False, "bar3": False}  # per-bar: False = цвет+красный на 100%, True = градиент
+DEFAULT_SOLID = {"bar0": False, "bar1": False, "bar2": False, "bar3": False}
+# per-bar: False = градиент через 3 стопа (c1->c2->c3) по позиции диода,
+#          True  = вся полоска заливается одним цветом c3 (тем, что на 100%)
 
 METRICS = {
     "cpu": "CPU",
@@ -91,10 +99,10 @@ state = {
     "screen": "LIB",
     "movies": 0, "series": 0, "total_tb": 0, "free_tb": 0, "arr_pct": 0,
     "stream_idx": 0, "stream_cnt": 0, "stream_title": "", "stream_user": "", "stream_prog": 0,
-    "colors": dict(DEFAULT_COLORS),
+    "colors": copy.deepcopy(DEFAULT_COLORS),
     "assignment": dict(DEFAULT_ASSIGNMENT),
     "brightness": DEFAULT_BRIGHTNESS,
-    "gradient": dict(DEFAULT_GRADIENT),
+    "solid": dict(DEFAULT_SOLID),
     "serial_connected": False,
 }
 
@@ -106,25 +114,30 @@ def load_settings():
     except Exception:
         saved = {}
 
-    colors = dict(DEFAULT_COLORS)
-    colors.update(saved.get("colors", {}))
+    colors = copy.deepcopy(DEFAULT_COLORS)
+    saved_colors = saved.get("colors", {})
+    if isinstance(saved_colors, dict):
+        for bar_key, bar_val in saved_colors.items():
+            if bar_key in colors and isinstance(bar_val, dict):
+                colors[bar_key].update(bar_val)
+            # если старый формат (просто hex-строка на бар) - игнорируем, остаёмся на дефолте
     assignment = dict(DEFAULT_ASSIGNMENT)
     assignment.update(saved.get("assignment", {}))
     brightness = saved.get("brightness", DEFAULT_BRIGHTNESS)
-    gradient = dict(DEFAULT_GRADIENT)
-    saved_gradient = saved.get("gradient", {})
+    solid = dict(DEFAULT_SOLID)
+    saved_gradient = saved.get("solid", {})
     if isinstance(saved_gradient, dict):
-        gradient.update(saved_gradient)
+        solid.update(saved_gradient)
     # если в settings.json старый формат (одно bool-значение на всё) - просто
     # игнорируем и остаёмся на дефолтах, ничего страшного
 
-    return colors, assignment, brightness, gradient
+    return colors, assignment, brightness, solid
 
 
-def save_settings(colors, assignment, brightness, gradient):
+def save_settings(colors, assignment, brightness, solid):
     os.makedirs(CONFIG_DIR, exist_ok=True)
     with open(SETTINGS_FILE, "w") as f:
-        json.dump({"colors": colors, "assignment": assignment, "brightness": brightness, "gradient": gradient}, f)
+        json.dump({"colors": colors, "assignment": assignment, "brightness": brightness, "solid": solid}, f)
 
 
 # ---------------- веб-интерфейс ----------------
@@ -166,8 +179,8 @@ PAGE_HTML = """<!doctype html>
   .card h2 { font-size:11px; color:var(--muted);
              margin:0 0 18px; font-weight:600; white-space:nowrap; }
 
-  .bars { display:flex; gap:20px; align-items:flex-end; height:150px; margin-bottom:18px; }
-  .bar-wrap { flex:1; display:flex; flex-direction:column; align-items:center; gap:10px; }
+  .bars { display:flex; gap:20px; align-items:flex-start; margin-bottom:18px; }
+  .bar-wrap { flex:1; display:flex; flex-direction:column; align-items:center; gap:8px; }
   .bar-track { width:100%; max-width:40px; height:130px; background:#101112; border-radius:6px;
                display:flex; flex-direction:column-reverse; overflow:hidden; border:1px solid var(--border); }
   .bar-fill { width:100%; transition:height .3s, background .2s; }
@@ -175,6 +188,8 @@ PAGE_HTML = """<!doctype html>
   .label b { color:var(--text); font-size:13px; }
   input[type=color] { width:32px; height:24px; border:none; background:none; border-radius:6px;
                        cursor:pointer; padding:0; }
+  .grad-colors { display:flex; gap:3px; }
+  .grad-colors input[type=color] { width:20px; height:20px; }
 
   select.metric { background:#101112; color:var(--text); border:1px solid var(--border); border-radius:6px;
                   font-size:11px; padding:3px 4px; width:100%; }
@@ -205,24 +220,40 @@ PAGE_HTML = """<!doctype html>
     <h2>SENSORS</h2>
     <div class="bars">
       <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-bar0"></div></div>
-        <input type="color" id="color-bar0">
+        <div class="grad-colors">
+          <input type="color" id="c1-bar0" title="0%">
+          <input type="color" id="c2-bar0" title="50%">
+          <input type="color" id="c3-bar0" title="100%">
+        </div>
         <select class="metric" id="metric-bar0"></select>
-        <label class="grad-label"><input type="checkbox" id="gradient-bar0"> градиент</label>
+        <label class="grad-label"><input type="checkbox" id="solid-bar0"> цвет на 100%</label>
         <div class="label"><b><span id="val-bar0"></span>%</b></div></div>
       <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-bar1"></div></div>
-        <input type="color" id="color-bar1">
+        <div class="grad-colors">
+          <input type="color" id="c1-bar1" title="0%">
+          <input type="color" id="c2-bar1" title="50%">
+          <input type="color" id="c3-bar1" title="100%">
+        </div>
         <select class="metric" id="metric-bar1"></select>
-        <label class="grad-label"><input type="checkbox" id="gradient-bar1"> градиент</label>
+        <label class="grad-label"><input type="checkbox" id="solid-bar1"> цвет на 100%</label>
         <div class="label"><b><span id="val-bar1"></span>%</b></div></div>
       <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-bar2"></div></div>
-        <input type="color" id="color-bar2">
+        <div class="grad-colors">
+          <input type="color" id="c1-bar2" title="0%">
+          <input type="color" id="c2-bar2" title="50%">
+          <input type="color" id="c3-bar2" title="100%">
+        </div>
         <select class="metric" id="metric-bar2"></select>
-        <label class="grad-label"><input type="checkbox" id="gradient-bar2"> градиент</label>
+        <label class="grad-label"><input type="checkbox" id="solid-bar2"> цвет на 100%</label>
         <div class="label"><b><span id="val-bar2"></span>%</b></div></div>
       <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-bar3"></div></div>
-        <input type="color" id="color-bar3">
+        <div class="grad-colors">
+          <input type="color" id="c1-bar3" title="0%">
+          <input type="color" id="c2-bar3" title="50%">
+          <input type="color" id="c3-bar3" title="100%">
+        </div>
         <select class="metric" id="metric-bar3"></select>
-        <label class="grad-label"><input type="checkbox" id="gradient-bar3"> градиент</label>
+        <label class="grad-label"><input type="checkbox" id="solid-bar3"> цвет на 100%</label>
         <div class="label"><b><span id="val-bar3"></span>%</b></div></div>
     </div>
     <div class="brightness-row">
@@ -242,13 +273,17 @@ PAGE_HTML = """<!doctype html>
 
 <script>
 const bars = ["bar0","bar1","bar2","bar3"];
-let editingColor = false;
+const stops = ["c1","c2","c3"];
+let editingColor = {};
 let editingBrightness = false;
 let metricsPopulated = false;
 
 bars.forEach(k => {
-  document.getElementById("color-" + k).addEventListener("input", () => editingColor = true);
-  document.getElementById("color-" + k).addEventListener("change", sendColors);
+  stops.forEach(stop => {
+    const el = document.getElementById(stop + "-" + k);
+    el.addEventListener("input", () => editingColor[k] = true);
+    el.addEventListener("change", () => sendColors(k));
+  });
   document.getElementById("metric-" + k).addEventListener("change", sendAssignment);
 });
 
@@ -263,23 +298,23 @@ brightnessEl.addEventListener("change", () => {
     .then(() => editingBrightness = false);
 });
 
-let editingGradient = {};
+let editingSolid = {};
 bars.forEach(k => {
-  const el = document.getElementById("gradient-" + k);
+  const el = document.getElementById("solid-" + k);
   el.addEventListener("change", () => {
-    editingGradient[k] = true;
-    document.getElementById("color-" + k).disabled = el.checked;
-    fetch("/api/gradient", { method: "POST", headers: {"Content-Type":"application/json"},
+    editingSolid[k] = true;
+    fetch("/api/solid", { method: "POST", headers: {"Content-Type":"application/json"},
       body: JSON.stringify({ [k]: el.checked }) })
-      .then(() => editingGradient[k] = false);
+      .then(() => editingSolid[k] = false);
   });
 });
 
-function sendColors() {
+function sendColors(k) {
   const body = {};
-  bars.forEach(k => body[k] = document.getElementById("color-" + k).value.slice(1));
+  body[k] = {};
+  stops.forEach(stop => body[k][stop] = document.getElementById(stop + "-" + k).value.slice(1));
   fetch("/api/colors", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) })
-    .then(() => editingColor = false);
+    .then(() => editingColor[k] = false);
 }
 
 function sendAssignment() {
@@ -349,23 +384,25 @@ function refresh() {
     bars.forEach(k => {
       const pct = s[k];
       const fill = document.getElementById("fill-" + k);
-      const isGrad = s.gradient[k];
+      const c = s.colors[k];
+      const isSolidAt100 = s.solid[k];
 
-      if (!editingGradient[k]) {
-        document.getElementById("gradient-" + k).checked = isGrad;
-        document.getElementById("color-" + k).disabled = isGrad;
+      if (!editingSolid[k]) {
+        document.getElementById("solid-" + k).checked = isSolidAt100;
+      }
+      if (!editingColor[k]) {
+        stops.forEach(stop => document.getElementById(stop + "-" + k).value = "#" + c[stop]);
       }
 
-      if (isGrad) {
-        fill.style.background = "linear-gradient(to top, #00ff00, #ff0000)";
+      if (isSolidAt100 && pct >= 100) {
+        fill.style.background = "#" + c.c3;
+      } else {
+        fill.style.background = `linear-gradient(to top, #${c.c1}, #${c.c2}, #${c.c3})`;
         fill.style.backgroundSize = "100% 130px";
         fill.style.backgroundPosition = "bottom";
-      } else {
-        fill.style.background = pct >= 100 ? "#e0483e" : "#" + s.colors[k];
       }
       fill.style.height = pct + "%";
       document.getElementById("val-" + k).textContent = pct;
-      if (!editingColor) document.getElementById("color-" + k).value = "#" + s.colors[k];
     });
 
     if (!editingBrightness) {
@@ -407,8 +444,10 @@ def api_colors():
     with state_lock:
         for k in ("bar0", "bar1", "bar2", "bar3"):
             if k in body:
-                state["colors"][k] = body[k].upper()
-        save_settings(state["colors"], state["assignment"], state["brightness"], state["gradient"])
+                for stop in ("c1", "c2", "c3"):
+                    if stop in body[k]:
+                        state["colors"][k][stop] = body[k][stop].upper()
+        save_settings(state["colors"], state["assignment"], state["brightness"], state["solid"])
     return jsonify({"ok": True})
 
 
@@ -419,7 +458,7 @@ def api_assignment():
         for k in ("bar0", "bar1", "bar2", "bar3"):
             if k in body and body[k] in METRICS:
                 state["assignment"][k] = body[k]
-        save_settings(state["colors"], state["assignment"], state["brightness"], state["gradient"])
+        save_settings(state["colors"], state["assignment"], state["brightness"], state["solid"])
     return jsonify({"ok": True})
 
 
@@ -428,18 +467,18 @@ def api_brightness():
     body = request.get_json(force=True)
     with state_lock:
         state["brightness"] = max(0, min(100, int(body.get("value", state["brightness"]))))
-        save_settings(state["colors"], state["assignment"], state["brightness"], state["gradient"])
+        save_settings(state["colors"], state["assignment"], state["brightness"], state["solid"])
     return jsonify({"ok": True})
 
 
-@app.route("/api/gradient", methods=["POST"])
-def api_gradient():
+@app.route("/api/solid", methods=["POST"])
+def api_solid():
     body = request.get_json(force=True)
     with state_lock:
         for k in ("bar0", "bar1", "bar2", "bar3"):
             if k in body:
-                state["gradient"][k] = bool(body[k])
-        save_settings(state["colors"], state["assignment"], state["brightness"], state["gradient"])
+                state["solid"][k] = bool(body[k])
+        save_settings(state["colors"], state["assignment"], state["brightness"], state["solid"])
     return jsonify({"ok": True})
 
 
@@ -632,11 +671,11 @@ def main():
     print(f"[shkaf-hud] starting, version {SCRIPT_VERSION}", flush=True)
 
     with state_lock:
-        colors, assignment, brightness, gradient = load_settings()
+        colors, assignment, brightness, solid = load_settings()
         state["colors"] = colors
         state["assignment"] = assignment
         state["brightness"] = brightness
-        state["gradient"] = gradient
+        state["solid"] = solid
 
     threading.Thread(target=run_web, daemon=True).start()
 
@@ -735,17 +774,20 @@ def main():
             colors = state["colors"]
             assignment = state["assignment"]
             brightness = state["brightness"]
-            gradient = state["gradient"]
+            solid = state["solid"]
 
         bar_values = {b: round(common_metrics[assignment[b]]) for b in ("bar0", "bar1", "bar2", "bar3")}
 
-        grad_part = "|".join(f"G{i}:{1 if gradient[f'bar{i}'] else 0}" for i in range(4))
+        grad_part = "|".join(f"G{i}:{1 if solid[f'bar{i}'] else 0}" for i in range(4))
 
         common = (
             f"BAR0:{bar_values['bar0']}|BAR1:{bar_values['bar1']}|"
             f"BAR2:{bar_values['bar2']}|BAR3:{bar_values['bar3']}|BRI:{brightness}|{grad_part}"
         )
-        color_part = f"|C0:{colors['bar0']}|C1:{colors['bar1']}|C2:{colors['bar2']}|C3:{colors['bar3']}"
+        color_part = "|" + "|".join(
+            f"C{b}{s}:{colors[f'bar{b}'][f'c{s}']}"
+            for b in range(4) for s in (1, 2, 3)
+        )
 
         # TB с точностью до сотых - Arduino парсит только целые, поэтому шлём
         # "центи-терабайты" (умноженное на 100 целое число) и делим на месте
