@@ -358,8 +358,8 @@ def run_main_loop():
         ctx["plex"], ctx["streams"], ctx["recent"] = collect_tautulli()
         ctx["qbt"] = qbt_client.get_downloading()
 
-        # 2. Рендер экранов
-        active_screens = screens.get_screens()
+        # 2. Рендер экранов (берём актуальный список из веб-модуля)
+        active_screens = screens_webui.get_screens()
         lines = rotation_state.current_lines(active_screens, ctx, now)
         
         # 3. Формирование протокола
