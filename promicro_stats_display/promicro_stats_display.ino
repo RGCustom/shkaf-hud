@@ -1,32 +1,23 @@
 /*
-  promicro_stats_display.ino  (контейнер: shkaf-hud)
+promicro_stats_display.ino  (контейнер: shkaf-hud)
+Минимальная прошивка - вся логика на сервере. Плата умеет только:
+1. Рисовать 4 LED-бара по присланным цветам/проценту
+2. Печатать 3 строки текста на OLED с плавным скроллингом
 
-  Минимальная прошивка - вся логика (метрики, форматирование, скроллинг-решения,
-  выбор экрана) на сервере. Плата умеет только две вещи:
-    1. Рисовать 4 LED-бара по присланным цветам/проценту/флагу "цвет на 100%"
-    2. Печатать 3 строки текста на OLED, скроллить через getTextBounds ту,
-       которая реально не помещается по ширине - остальное не трогает
+Протокол (pipe-delimited, только ИЗМЕНИВШИЕСЯ поля):
+BAR1:<pct>,<c1>,<c2>,<c3>,<0|1>
+BAR2, BAR3, BAR4  - аналогично
+BRI:<0-100>        - яркость ленты
+L1:<текст>, L2:<текст>, L3:<текст> - три строки OLED
 
-  ПРИМЕЧАНИЕ: кириллица пока не поддерживается (шрифт Adafruit_GFX только
-  латиница) - сервер шлёт транслит. Переход на u8g2 с кириллическим шрифтом
-  отложен на потом, чтобы сейчас не рисковать рабочей сборкой.
+=== ВЫБОР ШРИФТА ===
+Раскомментируй нужный шрифт ниже:
+- Стандартный Adafruit_GFX (латиница, быстрый)
+- Кастомный шрифт (подключи библиотеку Adafruit GFX Font)
+- Задел для u8g2 (кириллица, требует замены библиотеки)
 
-  Протокол (pipe-delimited, только ИЗМЕНИВШИЕСЯ поля, не все 8 сразу):
-
-    BAR1:<pct>,<c1>,<c2>,<c3>,<0|1>   - % заполнения, 3 цвета градиента (hex
-                                         без #), флаг "цвет c3 сплошным на 100%"
-    BAR2, BAR3, BAR4                  - аналогично для остальных баров
-    BRI:<0-100>                       - яркость ленты
-    L1:<текст>, L2:<текст>, L3:<текст> - три строки OLED, уже полностью
-                                         готовые к печати
-
-  Библиотеки (Library Manager): FastLED, Adafruit GFX Library, Adafruit SSD1306
-
-  === КАЛИБРОВКА ЛЕНТЫ ===
-  Пришли "CAL" в Serial Monitor - по очереди зажжётся каждый физический
-  диод белым с номером в консоли. LED_MAP ниже уже откалиброван под текущую
-  сборку (2 матрицы 4x4 = 4 вертикальных бара по 8) - трогать только если
-  перепаяешь ленту заново.
+=== КАЛИБРОВКА ЛЕНТЫ ===
+Пришли "CAL" в Serial Monitor - по очереди зажжётся каждый диод белым.
 */
 
 #include <FastLED.h>
@@ -35,31 +26,38 @@
 #include <Adafruit_SSD1306.h>
 
 // ---------------- КОНФИГ ----------------
-
 #define LED_PIN        6
 #define LEDS_PER_BAR   8
 #define NUM_BARS       4
-#define NUM_LEDS       (LEDS_PER_BAR * NUM_BARS)   // 32
-#define DEFAULT_BRIGHTNESS 15   // ~15% - безопасно для питания через USB без отдельного 5V
+#define NUM_LEDS       (LEDS_PER_BAR * NUM_BARS)
+#define DEFAULT_BRIGHTNESS 15
 
 #define OLED_WIDTH   128
 #define OLED_HEIGHT  64
 #define OLED_ADDR    0x3C
 
-// Откалиброванный порядок физических диодов в цепочке (см. блок калибровки выше)
+// Выбор шрифта (раскомментируй нужный):
+#define USE_STANDARD_FONT  // Стандартный шрифт Adafruit_GFX (латиница)
+// #define USE_CUSTOM_FONT   // Кастомный шрифт (требует подключения .h файла)
+// #define USE_U8G2          // Задел для u8g2 с кириллицей (требует замены библиотеки)
+
+#if defined(USE_CUSTOM_FONT)
+  #include "custom_font.h"  // Подключи свой шрифт
+#endif
+
+// Откалиброванный порядок диодов (см. блок калибровки)
 int LED_MAP[NUM_LEDS] = {
-   0,  1,  2,  3, 16, 17, 18, 19,   // бар 1 (низ -> верх)
-   7,  6,  5,  4, 23, 22, 21, 20,   // бар 2
-   8,  9, 10, 11, 24, 25, 26, 27,   // бар 3
-  15, 14, 13, 12, 31, 30, 29, 28    // бар 4
+  0,  1,  2,  3, 16, 17, 18, 19,
+  7,  6,  5,  4, 23, 22, 21, 20,
+  8,  9, 10, 11, 24, 25, 26, 27,
+  15, 14, 13, 12, 31, 30, 29, 28
 };
 
 // -------------------------------------------------------------
-
 CRGB leds[NUM_LEDS];
 Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
 
-// --- состояние баров: pct + 3 цвета градиента (0%/50%/100%) + "залить c3 на 100%" ---
+// --- состояние баров ---
 int barPct[NUM_BARS] = { 0, 0, 0, 0 };
 bool barSolid[NUM_BARS] = { false, false, false, false };
 CRGB barColors[NUM_BARS][3] = {
@@ -70,52 +68,85 @@ CRGB barColors[NUM_BARS][3] = {
 };
 int brightness = DEFAULT_BRIGHTNESS;
 
-// --- 3 строки OLED + независимый скролл на каждую ---
+// --- 3 строки OLED + плавный скролл ---
 String lineText[3] = { "", "", "" };
-String lastLineText[3] = { "", "", "" };
-int lineScrollOffset[3] = { 0, 0, 0 };
+int lineScrollOffset[3] = { 0, 0, 0 };  // в пикселях, отрицательное значение
 unsigned long lastScrollMs[3] = { 0, 0, 0 };
-const unsigned long SCROLL_INTERVAL_MS = 300;
-const int SCROLL_VISIBLE_CHARS = 10;  // при setTextSize(2) 128px / 12px-на-символ
+bool lineNeedsScroll[3] = { false, false, false };
+bool oledDirty = false;  // флаг "нужно перерисовать экран"
+
+const unsigned long SCROLL_INTERVAL_MS = 50;  // плавный скролл
+const int SCROLL_SPEED = 1;  // пикселей за тик
 
 String inputBuffer = "";
+const int MAX_INPUT_LENGTH = 256;  // защита от переполнения буфера
+
+unsigned long lastDataMs = 0;  // для индикации активности
+const int LED_BUILTIN_PIN = 13;  // встроенный светодиод Pro Micro
 
 void setup() {
   Serial.begin(115200);
-
+  pinMode(LED_BUILTIN_PIN, OUTPUT);
+  
   FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
   FastLED.setBrightness(map(brightness, 0, 100, 0, 255));
   fill_solid(leds, NUM_LEDS, CRGB::Black);
   FastLED.show();
-
+  
   display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
+  
+  #if defined(USE_STANDARD_FONT)
+    display.setTextSize(2);  // единый шрифт для всех экранов
+  #elif defined(USE_CUSTOM_FONT)
+    display.setFont(&Custom_Font);  // замени на имя своего шрифта
+  #endif
+  
   display.display();
+  
+  Serial.println(F("shkaf-hud Arduino ready"));
 }
 
 void loop() {
+  // Чтение Serial с защитой от переполнения
   while (Serial.available()) {
     char c = Serial.read();
     if (c == '\n') {
       inputBuffer.trim();
       if (inputBuffer == "CAL") {
         runCalibration();
-      } else if (inputBuffer.length() > 0) {
+      } else if (inputBuffer.length() > 0 && inputBuffer.length() < MAX_INPUT_LENGTH) {
         parseLine(inputBuffer);
+        oledDirty = true;  // помечаем, что нужно перерисовать
+        lastDataMs = millis();
+        digitalWrite(LED_BUILTIN_PIN, HIGH);  // мигаем при получении данных
+      } else if (inputBuffer.length() >= MAX_INPUT_LENGTH) {
+        Serial.println(F("WARNING: input buffer overflow"));
       }
       inputBuffer = "";
     } else if (c != '\r') {
-      inputBuffer += c;
+      if (inputBuffer.length() < MAX_INPUT_LENGTH) {
+        inputBuffer += c;
+      }
     }
   }
-
+  
+  // Гасим встроенный светодиод через 100мс после получения данных
+  if (millis() - lastDataMs > 100) {
+    digitalWrite(LED_BUILTIN_PIN, LOW);
+  }
+  
   drawBars();
-  drawOled();
+  
+  // Рисуем OLED только если данные изменились
+  if (oledDirty) {
+    drawOled();
+    oledDirty = false;
+  }
 }
 
 // ---------------- парсинг протокола ----------------
-
 CRGB hexToColor(const String &hex) {
   if (hex.length() < 6) return CRGB::Black;
   long val = strtol(hex.c_str(), NULL, 16);
@@ -123,13 +154,12 @@ CRGB hexToColor(const String &hex) {
 }
 
 void parseBar(int barIndex, const String &val) {
-  // "pct,c1,c2,c3,solid"
   int p1 = val.indexOf(',');
   int p2 = val.indexOf(',', p1 + 1);
   int p3 = val.indexOf(',', p2 + 1);
   int p4 = val.indexOf(',', p3 + 1);
   if (p1 == -1 || p2 == -1 || p3 == -1 || p4 == -1) return;
-
+  
   barPct[barIndex] = val.substring(0, p1).toInt();
   barColors[barIndex][0] = hexToColor(val.substring(p1 + 1, p2));
   barColors[barIndex][1] = hexToColor(val.substring(p2 + 1, p3));
@@ -143,12 +173,11 @@ void parseLine(const String &line) {
     int sep = line.indexOf('|', start);
     if (sep == -1) sep = line.length();
     String token = line.substring(start, sep);
-
     int colon = token.indexOf(':');
     if (colon != -1) {
       String key = token.substring(0, colon);
       String val = token.substring(colon + 1);
-
+      
       if (key == "BAR1") parseBar(0, val);
       else if (key == "BAR2") parseBar(1, val);
       else if (key == "BAR3") parseBar(2, val);
@@ -157,17 +186,40 @@ void parseLine(const String &line) {
         brightness = val.toInt();
         FastLED.setBrightness(map(brightness, 0, 100, 0, 255));
       }
-      else if (key == "L1") lineText[0] = val;
-      else if (key == "L2") lineText[1] = val;
-      else if (key == "L3") lineText[2] = val;
+      else if (key == "L1") {
+        if (lineText[0] != val) {
+          lineText[0] = val;
+          lineScrollOffset[0] = 0;
+          lineNeedsScroll[0] = checkNeedsScroll(val);
+        }
+      }
+      else if (key == "L2") {
+        if (lineText[1] != val) {
+          lineText[1] = val;
+          lineScrollOffset[1] = 0;
+          lineNeedsScroll[1] = checkNeedsScroll(val);
+        }
+      }
+      else if (key == "L3") {
+        if (lineText[2] != val) {
+          lineText[2] = val;
+          lineScrollOffset[2] = 0;
+          lineNeedsScroll[2] = checkNeedsScroll(val);
+        }
+      }
     }
     start = sep + 1;
   }
 }
 
-// ---------------- LED бары ----------------
+bool checkNeedsScroll(const String &text) {
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+  return w > OLED_WIDTH;
+}
 
-// градиент по позиции в баре: 3 стопа c1(0%)->c2(50%)->c3(100%), интерполяция через blend()
+// ---------------- LED бары ----------------
 CRGB gradientColorForLevel(int barIndex, int level) {
   float frac = (float)level / (LEDS_PER_BAR - 1);
   if (frac <= 0.5) {
@@ -182,11 +234,11 @@ CRGB gradientColorForLevel(int barIndex, int level) {
 void drawOneBar(int barIndex, int pct) {
   int lit = round(pct / 100.0 * LEDS_PER_BAR);
   lit = constrain(lit, 0, LEDS_PER_BAR);
-
+  
   for (int level = 0; level < LEDS_PER_BAR; level++) {
     int logicalPos = barIndex * LEDS_PER_BAR + level;
     int rawIndex = LED_MAP[logicalPos];
-
+    
     if (level >= lit) {
       leds[rawIndex] = CRGB::Black;
     } else if (barSolid[barIndex] && pct >= 100) {
@@ -206,11 +258,11 @@ void drawBars() {
 }
 
 // ---------------- калибровка ----------------
-
 void runCalibration() {
   Serial.println(F("=== CALIBRATION MODE ==="));
   fill_solid(leds, NUM_LEDS, CRGB::Black);
   FastLED.show();
+  
   for (int i = 0; i < NUM_LEDS; i++) {
     fill_solid(leds, NUM_LEDS, CRGB::Black);
     leds[i] = CRGB::White;
@@ -219,46 +271,45 @@ void runCalibration() {
     Serial.println(i);
     delay(700);
   }
+  
   fill_solid(leds, NUM_LEDS, CRGB::Black);
   FastLED.show();
   Serial.println(F("=== CALIBRATION DONE ==="));
 }
 
-// ---------------- OLED (3 строки, скролл через getTextBounds) ----------------
-
-String scrollableText(int idx, const String &text) {
-  if (text != lastLineText[idx]) {
-    lineScrollOffset[idx] = 0;
-    lastLineText[idx] = text;
-    lastScrollMs[idx] = millis();
-  }
-
-  int16_t x1, y1;
-  uint16_t w, h;
-  display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
-
-  if (w <= OLED_WIDTH) {
-    return text;
-  }
-
-  if (millis() - lastScrollMs[idx] > SCROLL_INTERVAL_MS) {
-    lineScrollOffset[idx] = (lineScrollOffset[idx] + 1) % (text.length() + 4);
-    lastScrollMs[idx] = millis();
-  }
-
-  String loopText = text + F("    ") + text;
-  return loopText.substring(lineScrollOffset[idx], lineScrollOffset[idx] + SCROLL_VISIBLE_CHARS);
-}
-
+// ---------------- OLED (3 строки, плавный скролл по пикселям) ----------------
 void drawOled() {
   display.clearDisplay();
-  display.setTextSize(2);
-
+  
+  #if defined(USE_STANDARD_FONT)
+    display.setTextSize(2);
+  #elif defined(USE_CUSTOM_FONT)
+    display.setFont(&Custom_Font);
+  #endif
+  
   int yPos[3] = { 2, 24, 46 };
+  
   for (int i = 0; i < 3; i++) {
-    display.setCursor(0, yPos[i]);
-    display.print(scrollableText(i, lineText[i]));
+    if (lineNeedsScroll[i]) {
+      // Плавный скролл по пикселям
+      if (millis() - lastScrollMs[i] > SCROLL_INTERVAL_MS) {
+        lineScrollOffset[i] -= SCROLL_SPEED;
+        lastScrollMs[i] = millis();
+        
+        // Сброс скролла, когда текст полностью прокрутился
+        int16_t x1, y1;
+        uint16_t w, h;
+        display.getTextBounds(lineText[i], 0, 0, &x1, &y1, &w, &h);
+        if (abs(lineScrollOffset[i]) > w + OLED_WIDTH) {
+          lineScrollOffset[i] = 0;
+        }
+      }
+      display.setCursor(lineScrollOffset[i], yPos[i]);
+    } else {
+      display.setCursor(0, yPos[i]);
+    }
+    display.print(lineText[i]);
   }
-
+  
   display.display();
 }

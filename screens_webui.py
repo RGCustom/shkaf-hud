@@ -9,6 +9,7 @@ get_context - функция без аргументов, возвращающа
 редактировании шаблона.
 """
 
+import json
 import threading
 
 from flask import request, jsonify, Response
@@ -21,322 +22,367 @@ _lock = threading.Lock()
 _screens = screens.load_screens()
 
 
-SCREENS_PAGE_HTML = """<!doctype html>
-<html><head><meta charset="utf-8"><title>shkaf-hud - экраны</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="manifest" href="/manifest.json">
-<meta name="theme-color" content="#ff8c2f">
-<link rel="icon" type="image/png" href="https://raw.githubusercontent.com/RGCustom/shkaf-hud/main/favicon.png">
-<link rel="apple-touch-icon" href="https://raw.githubusercontent.com/RGCustom/shkaf-hud/main/icon.png">
-<style>
-  * { box-sizing: border-box; }
-  :root {
-    --bg: #17181a; --panel: #1f2123; --border: #2c2e31;
-    --text: #e6e6e6; --muted: #8a8d91; --accent: #ff8c2f; --danger: #e0483e;
-  }
-  body { background:var(--bg); color:var(--text); font-family:-apple-system,Segoe UI,Roboto,sans-serif;
-         margin:0; padding:24px 16px 60px; }
-  .wrap { max-width:720px; margin:0 auto; }
-  .brand { display:flex; align-items:center; gap:10px; margin-bottom:4px; }
-  .brand .dot { width:9px; height:9px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); }
-  h1 { font-size:19px; font-weight:600; margin:0; }
-  .nav { display:flex; gap:16px; margin:14px 0 24px; }
-  .nav a { color:var(--muted); text-decoration:none; font-size:13px; padding:6px 0; border-bottom:2px solid transparent; }
-  .nav a.active { color:var(--text); border-bottom-color:var(--accent); }
+# ---------------- HTML / CSS / JS (Всё в одном файле) ----------------
 
-  .card { background:var(--panel); border:1px solid var(--border); border-radius:14px;
-          padding:18px; margin-bottom:16px; }
-
-  .screen-row { display:flex; align-items:center; gap:10px; padding:10px 8px; border-radius:8px;
-                border:1px solid var(--border); margin-bottom:8px; background:#191a1c; cursor:grab; }
-  .screen-row.dragging { opacity:.4; }
-  .screen-row .handle { color:var(--muted); font-size:16px; }
-  .screen-row .info { flex:1; min-width:0; }
-  .screen-row .name { font-size:14px; }
-  .screen-row .preview { font-size:11px; color:var(--muted); font-family:monospace; white-space:nowrap;
-                          overflow:hidden; text-overflow:ellipsis; }
-  .screen-row input[type=checkbox] { width:16px; height:16px; }
-  .screen-row .dur { width:52px; background:#101112; color:var(--text); border:1px solid var(--border);
-                      border-radius:6px; padding:4px; font-size:12px; text-align:center; }
-  .screen-row button { background:none; border:none; color:var(--muted); cursor:pointer; font-size:15px; padding:4px 6px; }
-  .screen-row button:hover { color:var(--text); }
-
-  #add-btn { background:var(--accent); color:#151515; border:none; border-radius:8px;
-             padding:10px 18px; font-weight:600; cursor:pointer; font-size:14px; margin-top:6px; }
-
-  .modal-bg { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); align-items:center;
-              justify-content:center; z-index:10; padding:16px; }
-  .modal-bg.show { display:flex; }
-  .modal { background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:22px;
-           width:100%; max-width:520px; max-height:90vh; overflow-y:auto; }
-  .modal h2 { font-size:16px; margin:0 0 16px; }
-  .modal label { font-size:12px; color:var(--muted); display:block; margin:12px 0 4px; }
-  .modal input[type=text], .modal input[type=number] {
-    width:100%; background:#101112; color:var(--text); border:1px solid var(--border);
-    border-radius:6px; padding:8px 10px; font-size:14px; font-family:monospace;
-  }
-  .line-preview { font-size:12px; color:var(--accent); font-family:monospace; margin-top:4px; min-height:16px; }
-  .line-preview.err { color:var(--danger); }
-  .modal-actions { display:flex; justify-content:space-between; gap:10px; margin-top:20px; }
-  .modal-actions .left { display:flex; gap:10px; }
-  .btn { border:none; border-radius:6px; padding:8px 16px; font-size:13px; cursor:pointer; }
-  .btn.primary { background:var(--accent); color:#151515; font-weight:600; }
-  .btn.secondary { background:#101112; color:var(--text); border:1px solid var(--border); }
-  .btn.danger { background:#3a1f1c; color:#ffb3ab; border:1px solid var(--danger); }
-
-  .legend { margin-top:16px; }
-  .legend-group { margin-bottom:10px; }
-  .legend-group .gtitle { font-size:11px; color:var(--muted); text-transform:uppercase; margin-bottom:4px; }
-  .legend-item { display:inline-block; background:#101112; border:1px solid var(--border); border-radius:5px;
-                 padding:3px 7px; margin:2px 3px 2px 0; font-size:11px; font-family:monospace; cursor:pointer;
-                 color:var(--text); }
-  .legend-item:hover { border-color:var(--accent); color:var(--accent); }
-
-  footer { text-align:center; color:var(--border); font-size:11px; margin-top:20px; }
-</style></head>
+SCREENS_PAGE_HTML = """
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>shkaf-hud - Screens</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#ff8c2f">
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+    <style>
+        :root { --bg: #17181a; --card: #2a2b2e; --accent: #ff8c2f; --text: #e0e0e0; --muted: #888; }
+        body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; }
+        header { background: #222; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--accent); }
+        header h1 { margin: 0; font-size: 1.2em; color: var(--accent); }
+        nav a { color: var(--text); text-decoration: none; margin-left: 15px; font-size: 0.95em; }
+        nav a.active { color: var(--accent); font-weight: bold; }
+        
+        .container { display: flex; flex-wrap: wrap; padding: 20px; gap: 20px; max-width: 1200px; margin: 0 auto; }
+        .col { flex: 1; min-width: 320px; }
+        .col-left { flex: 1.2; }
+        
+        /* Список экранов */
+        .screen-list { list-style: none; padding: 0; margin: 0; }
+        .screen-item { background: var(--card); margin-bottom: 8px; padding: 12px; border-radius: 6px; cursor: grab; display: flex; justify-content: space-between; align-items: center; border-left: 4px solid transparent; transition: background 0.2s; }
+        .screen-item:hover { background: #333438; }
+        .screen-item.active { border-left-color: var(--accent); background: #3a3b3e; }
+        .screen-item .info { flex-grow: 1; overflow: hidden; }
+        .screen-item .name { font-weight: bold; font-size: 1.05em; }
+        .screen-item .meta { font-size: 0.8em; color: var(--muted); margin-top: 2px; }
+        .screen-item .lines { font-family: monospace; font-size: 0.75em; color: #666; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .drag-handle { padding: 0 10px; color: #555; font-size: 1.2em; cursor: grab; }
+        
+        /* Форма */
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 6px; font-weight: bold; font-size: 0.85em; color: #aaa; text-transform: uppercase; letter-spacing: 0.5px; }
+        input, textarea { width: 100%; background: #111; color: #fff; border: 1px solid #444; border-radius: 4px; padding: 10px; box-sizing: border-box; font-family: monospace; font-size: 0.95em; }
+        input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+        textarea { resize: vertical; min-height: 50px; }
+        
+        .btn-row { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
+        button { background: var(--accent); color: #000; border: none; padding: 10px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.9em; transition: opacity 0.2s; }
+        button:hover { opacity: 0.85; }
+        button.secondary { background: #444; color: #fff; }
+        button.danger { background: #d32f2f; color: #fff; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        /* Легенда переменных */
+        .legend-group { margin-bottom: 15px; }
+        .legend-title { font-weight: bold; color: var(--accent); margin-bottom: 6px; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.5px; }
+        .legend-items { display: flex; flex-wrap: wrap; gap: 6px; }
+        .var-chip { background: var(--card); border: 1px solid #444; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; cursor: pointer; font-family: monospace; transition: all 0.2s; }
+        .var-chip:hover { background: #3a3b3e; border-color: var(--accent); color: var(--accent); }
+        
+        /* Превью */
+        .preview-box { background: #000; color: #0f0; font-family: monospace; padding: 12px; border-radius: 4px; min-height: 60px; margin-top: 10px; white-space: pre-wrap; font-size: 0.9em; border: 1px solid #333; }
+        .preview-error { color: #ff5252; }
+        
+        @media (max-width: 768px) {
+            .container { flex-direction: column; }
+        }
+    </style>
+</head>
 <body>
-<div class="wrap">
-  <div class="brand"><span class="dot"></span><h1>shkaf-hud</h1></div>
-  <div class="nav"><a href="/">Sensors</a><a href="/screens" class="active">OLED screens</a></div>
+    <header>
+        <h1>shkaf-hud</h1>
+        <nav>
+            <a href="/">Sensors</a>
+            <a href="/screens" class="active">OLED screens</a>
+        </nav>
+    </header>
 
-  <div class="card">
-    <div id="screen-list"></div>
-    <button id="add-btn">+ Добавить экран</button>
-  </div>
+    <div class="container">
+        <!-- Левая колонка: Список экранов -->
+        <div class="col col-left">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h2 style="margin: 0; font-size: 1.1em;">Экраны (порядок ротации)</h2>
+                <button onclick="addNewScreen()">+ Добавить</button>
+            </div>
+            <ul id="screen-list" class="screen-list">
+                <!-- Заполняется JS -->
+            </ul>
+        </div>
 
-  <footer>shkaf-hud</footer>
-</div>
+        <!-- Правая колонка: Редактор и Легенда -->
+        <div class="col">
+            <div id="editor-panel" style="display: none;">
+                <h2 style="margin-top: 0; font-size: 1.1em;">Редактирование экрана</h2>
+                
+                <div class="form-group">
+                    <label>Название (только для интерфейса)</label>
+                    <input type="text" id="inp-name">
+                </div>
+                
+                <div class="form-group">
+                    <label>Время показа, сек</label>
+                    <input type="number" id="inp-duration" min="1" step="0.5">
+                </div>
 
-<div class="modal-bg" id="modal-bg">
-  <div class="modal">
-    <h2 id="modal-title">Экран</h2>
-    <input type="hidden" id="edit-id">
+                <div class="form-group">
+                    <label>Строка 1 (L1)</label>
+                    <textarea id="inp-l1" onfocus="activeTextarea=this"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Строка 2 (L2)</label>
+                    <textarea id="inp-l2" onfocus="activeTextarea=this"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Строка 3 (L3)</label>
+                    <textarea id="inp-l3" onfocus="activeTextarea=this"></textarea>
+                </div>
 
-    <label>Название (только для интерфейса)</label>
-    <input type="text" id="edit-name" placeholder="Storage">
+                <div class="btn-row">
+                    <button onclick="saveCurrentScreen()">Сохранить</button>
+                    <button class="secondary" onclick="runPreview()">Live Preview</button>
+                    <button class="danger" onclick="deleteCurrentScreen()" style="margin-left: auto;">Удалить</button>
+                </div>
 
-    <label>Время показа, сек</label>
-    <input type="number" id="edit-duration" min="1" step="0.5" value="4">
+                <div style="margin-top: 20px;">
+                    <label>Результат превью:</label>
+                    <div id="preview-output" class="preview-box">Нажмите "Live Preview" для проверки...</div>
+                </div>
+            </div>
+            
+            <div id="empty-state" style="text-align: center; color: var(--muted); margin-top: 50px;">
+                Выберите экран из списка или создайте новый
+            </div>
 
-    <label>Строка 1</label>
-    <input type="text" id="edit-l1" placeholder="Cache {cache_pct}%">
-    <div class="line-preview" id="preview-l1"></div>
-
-    <label>Строка 2</label>
-    <input type="text" id="edit-l2" placeholder="Array {array_pct}%">
-    <div class="line-preview" id="preview-l2"></div>
-
-    <label>Строка 3</label>
-    <input type="text" id="edit-l3" placeholder="Fr {free_tb:.2f}TB">
-    <div class="line-preview" id="preview-l3"></div>
-
-    <div class="legend" id="legend"></div>
-
-    <div class="modal-actions">
-      <div class="left">
-        <button class="btn primary" id="save-btn">Сохранить</button>
-        <button class="btn secondary" id="cancel-btn">Отмена</button>
-      </div>
-      <button class="btn danger" id="delete-btn" style="display:none">Удалить</button>
+            <h2 style="margin-top: 30px; font-size: 1.1em;">Доступные переменные</h2>
+            <p style="font-size: 0.85em; color: var(--muted); margin-top: -10px;">Кликните, чтобы вставить в активное поле</p>
+            <div id="variables-legend">
+                <!-- Заполняется JS -->
+            </div>
+        </div>
     </div>
-  </div>
-</div>
 
-<script>
-let screensCache = [];
-let draggedId = null;
-let focusedField = null;
+    <script>
+        let screens = [];
+        let variables = [];
+        let currentScreenId = null;
+        let activeTextarea = null;
 
-document.querySelectorAll('#edit-l1,#edit-l2,#edit-l3').forEach(el => {
-  el.addEventListener('focus', () => focusedField = el);
-});
+        // --- Инициализация ---
+        async function init() {
+            const [sRes, vRes] = await Promise.all([
+                fetch('/api/screens').then(r => r.json()),
+                fetch('/api/variables').then(r => r.json())
+            ]);
+            screens = sRes;
+            variables = vRes;
+            renderScreenList();
+            renderVariablesLegend();
+            initSortable();
+        }
 
-function loadScreens() {
-  fetch('/api/screens').then(r => r.json()).then(data => {
-    screensCache = data;
-    renderList();
-  });
-}
+        // --- Рендер списка экранов ---
+        function renderScreenList() {
+            const list = document.getElementById('screen-list');
+            list.innerHTML = '';
+            screens.forEach(s => {
+                const li = document.createElement('li');
+                li.className = `screen-item ${s.id === currentScreenId ? 'active' : ''}`;
+                li.dataset.id = s.id;
+                li.innerHTML = `
+                    <div class="drag-handle">☰</div>
+                    <div class="info" onclick="selectScreen('${s.id}')">
+                        <div class="name">${escapeHtml(s.name)}</div>
+                        <div class="meta">${s.duration} сек | ${s.enabled ? 'Вкл' : 'Выкл'}</div>
+                        <div class="lines">L1: ${escapeHtml(s.l1 || '-')}</div>
+                        <div class="lines">L2: ${escapeHtml(s.l2 || '-')}</div>
+                        <div class="lines">L3: ${escapeHtml(s.l3 || '-')}</div>
+                    </div>
+                `;
+                list.appendChild(li);
+            });
+        }
 
-function renderList() {
-  const list = document.getElementById('screen-list');
-  list.innerHTML = '';
-  screensCache.forEach(s => {
-    const row = document.createElement('div');
-    row.className = 'screen-row';
-    row.draggable = true;
-    row.dataset.id = s.id;
+        // --- Рендер легенды переменных ---
+        function renderVariablesLegend() {
+            const container = document.getElementById('variables-legend');
+            const groups = {};
+            variables.forEach(v => {
+                if (!groups[v.group]) groups[v.group] = [];
+                groups[v.group].push(v);
+            });
 
-    row.addEventListener('dragstart', () => { draggedId = s.id; row.classList.add('dragging'); });
-    row.addEventListener('dragend', () => row.classList.remove('dragging'));
-    row.addEventListener('dragover', e => e.preventDefault());
-    row.addEventListener('drop', e => {
-      e.preventDefault();
-      if (!draggedId || draggedId === s.id) return;
-      const fromIdx = screensCache.findIndex(x => x.id === draggedId);
-      const toIdx = screensCache.findIndex(x => x.id === s.id);
-      const [moved] = screensCache.splice(fromIdx, 1);
-      screensCache.splice(toIdx, 0, moved);
-      renderList();
-      saveOrder();
-    });
+            const groupNames = {
+                'scalar': 'Система / Сеть / Plex',
+                'stream': 'Активные стримы',
+                'recent': 'Недавно добавленные',
+                'qbt': 'qBittorrent'
+            };
 
-    const handle = document.createElement('div');
-    handle.className = 'handle';
-    handle.textContent = '\u2261';
+            let html = '';
+            for (const [group, items] of Object.entries(groups)) {
+                html += `<div class="legend-group">
+                    <div class="legend-title">${groupNames[group] || group}</div>
+                    <div class="legend-items">`;
+                items.forEach(item => {
+                    html += `<div class="var-chip" onclick="insertVar('{${item.name}}')" title="${escapeHtml(item.label)}">{${item.name}}</div>`;
+                });
+                html += `</div></div>`;
+            }
+            container.innerHTML = html;
+        }
 
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = s.enabled;
-    cb.addEventListener('change', () => {
-      fetch('/api/screens/' + s.id, { method: 'PUT', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ enabled: cb.checked }) });
-    });
+        // --- Drag and Drop ---
+        function initSortable() {
+            new Sortable(document.getElementById('screen-list'), {
+                handle: '.drag-handle',
+                animation: 150,
+                onEnd: async (evt) => {
+                    const newOrder = Array.from(evt.to.children).map(el => el.dataset.id);
+                    await fetch('/api/screens/reorder', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({order: newOrder})
+                    });
+                    // Обновляем локальный массив screens в соответствии с новым порядком
+                    const byId = Object.fromEntries(screens.map(s => [s.id, s]));
+                    screens = newOrder.map(id => byId[id]).filter(Boolean);
+                }
+            });
+        }
 
-    const info = document.createElement('div');
-    info.className = 'info';
-    const name = document.createElement('div');
-    name.className = 'name';
-    name.textContent = s.name;
-    const preview = document.createElement('div');
-    preview.className = 'preview';
-    preview.textContent = [s.l1, s.l2, s.l3].filter(Boolean).join('  |  ');
-    info.appendChild(name);
-    info.appendChild(preview);
+        // --- Редактирование ---
+        function selectScreen(id) {
+            currentScreenId = id;
+            const s = screens.find(x => x.id === id);
+            if (!s) return;
 
-    const dur = document.createElement('input');
-    dur.type = 'number';
-    dur.className = 'dur';
-    dur.min = 1; dur.step = 0.5;
-    dur.value = s.duration;
-    dur.addEventListener('change', () => {
-      fetch('/api/screens/' + s.id, { method: 'PUT', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ duration: parseFloat(dur.value) || 4 }) });
-    });
+            document.getElementById('editor-panel').style.display = 'block';
+            document.getElementById('empty-state').style.display = 'none';
+            document.getElementById('inp-name').value = s.name;
+            document.getElementById('inp-duration').value = s.duration;
+            document.getElementById('inp-l1').value = s.l1 || '';
+            document.getElementById('inp-l2').value = s.l2 || '';
+            document.getElementById('inp-l3').value = s.l3 || '';
+            
+            renderScreenList(); // Обновить подсветку
+            document.getElementById('preview-output').textContent = 'Нажмите "Live Preview" для проверки...';
+            document.getElementById('preview-output').className = 'preview-box';
+        }
 
-    const editBtn = document.createElement('button');
-    editBtn.textContent = '\u270e';
-    editBtn.addEventListener('click', () => openModal(s));
+        function addNewScreen() {
+            fetch('/api/screens', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name: 'New Screen', l1: '', l2: '', l3: '', duration: 4.0})
+            }).then(r => r.json()).then(s => {
+                screens.push(s);
+                renderScreenList();
+                selectScreen(s.id);
+            });
+        }
 
-    row.appendChild(handle);
-    row.appendChild(cb);
-    row.appendChild(info);
-    row.appendChild(dur);
-    row.appendChild(editBtn);
-    list.appendChild(row);
-  });
-}
+        async function saveCurrentScreen() {
+            if (!currentScreenId) return;
+            const data = {
+                name: document.getElementById('inp-name').value,
+                duration: parseFloat(document.getElementById('inp-duration').value) || 4.0,
+                l1: document.getElementById('inp-l1').value,
+                l2: document.getElementById('inp-l2').value,
+                l3: document.getElementById('inp-l3').value
+            };
+            
+            await fetch(`/api/screens/${currentScreenId}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+            
+            // Обновляем локально
+            const idx = screens.findIndex(s => s.id === currentScreenId);
+            if (idx !== -1) {
+                screens[idx] = {...screens[idx], ...data};
+                renderScreenList();
+            }
+        }
 
-function saveOrder() {
-  fetch('/api/screens/reorder', { method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ order: screensCache.map(s => s.id) }) });
-}
+        async function deleteCurrentScreen() {
+            if (!currentScreenId) return;
+            if (!confirm('Удалить этот экран?')) return;
+            
+            await fetch(`/api/screens/${currentScreenId}`, {method: 'DELETE'});
+            screens = screens.filter(s => s.id !== currentScreenId);
+            currentScreenId = null;
+            document.getElementById('editor-panel').style.display = 'none';
+            document.getElementById('empty-state').style.display = 'block';
+            renderScreenList();
+        }
 
-function buildLegend() {
-  fetch('/api/variables').then(r => r.json()).then(vars => {
-    const groups = {};
-    vars.forEach(v => { (groups[v.group] = groups[v.group] || []).push(v); });
-    const labels = { scalar: 'Общие', stream: 'Стримы (Plex)', recent: 'Недавно добавленное', qbt: 'qBittorrent' };
-    const legend = document.getElementById('legend');
-    legend.innerHTML = '';
-    Object.entries(groups).forEach(([g, items]) => {
-      const div = document.createElement('div');
-      div.className = 'legend-group';
-      const title = document.createElement('div');
-      title.className = 'gtitle';
-      title.textContent = labels[g] || g;
-      div.appendChild(title);
-      items.forEach(v => {
-        const span = document.createElement('span');
-        span.className = 'legend-item';
-        span.textContent = '{' + v.name + '}';
-        span.title = v.label;
-        span.addEventListener('click', () => {
-          const field = focusedField || document.getElementById('edit-l1');
-          const pos = field.selectionStart || field.value.length;
-          field.value = field.value.slice(0, pos) + '{' + v.name + '}' + field.value.slice(pos);
-          field.dispatchEvent(new Event('input'));
-          field.focus();
-        });
-        div.appendChild(span);
-      });
-      legend.appendChild(div);
-    });
-  });
-}
+        // --- Live Preview ---
+        async function runPreview() {
+            const l1 = document.getElementById('inp-l1').value;
+            const l2 = document.getElementById('inp-l2').value;
+            const l3 = document.getElementById('inp-l3').value;
+            const out = document.getElementById('preview-output');
+            
+            out.textContent = 'Загрузка...';
+            out.className = 'preview-box';
+            
+            try {
+                const res = await fetch('/api/preview', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({l1, l2, l3})
+                });
+                const data = await res.json();
+                
+                if (data.unknown_vars && data.unknown_vars.length > 0) {
+                    out.className = 'preview-box preview-error';
+                    out.textContent = `Ошибка: неизвестные переменные: ${data.unknown_vars.join(', ')}`;
+                    return;
+                }
+                
+                let text = '';
+                if (data.rendered_l1) text += `L1: ${data.rendered_l1}\n`;
+                if (data.rendered_l2) text += `L2: ${data.rendered_l2}\n`;
+                if (data.rendered_l3) text += `L3: ${data.rendered_l3}\n`;
+                
+                if (!data.all_resolved) {
+                    out.className = 'preview-box preview-error';
+                    text += '\n[ВНИМАНИЕ: Некоторые переменные не резолвятся. Экран может быть скрыт.]';
+                } else {
+                    out.className = 'preview-box';
+                }
+                out.textContent = text || '(пусто)';
+                
+            } catch (e) {
+                out.className = 'preview-box preview-error';
+                out.textContent = 'Ошибка сети: ' + e.message;
+            }
+        }
 
-function livePreview(inputEl, previewEl) {
-  const tpl = inputEl.value;
-  if (!tpl) { previewEl.textContent = ''; previewEl.classList.remove('err'); return; }
-  fetch('/api/preview', { method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ template: tpl }) })
-    .then(r => r.json())
-    .then(res => {
-      if (res.unknown_vars.length) {
-        previewEl.textContent = 'Неизвестные переменные: ' + res.unknown_vars.join(', ');
-        previewEl.classList.add('err');
-      } else {
-        previewEl.textContent = '\u2192 ' + (res.rendered || '(пусто)') + (res.all_resolved ? '' : '  (нет данных сейчас)');
-        previewEl.classList.remove('err');
-      }
-    });
-}
+        // --- Утилиты ---
+        function insertVar(text) {
+            if (!activeTextarea) {
+                alert('Сначала кликните в поле L1, L2 или L3, куда нужно вставить переменную.');
+                return;
+            }
+            const start = activeTextarea.selectionStart;
+            const end = activeTextarea.selectionEnd;
+            const val = activeTextarea.value;
+            activeTextarea.value = val.substring(0, start) + text + val.substring(end);
+            activeTextarea.focus();
+            activeTextarea.selectionStart = activeTextarea.selectionEnd = start + text.length;
+        }
 
-['l1','l2','l3'].forEach(k => {
-  const input = document.getElementById('edit-' + k);
-  const preview = document.getElementById('preview-' + k);
-  input.addEventListener('input', () => livePreview(input, preview));
-});
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
 
-function openModal(s) {
-  document.getElementById('modal-title').textContent = s ? 'Редактировать экран' : 'Новый экран';
-  document.getElementById('edit-id').value = s ? s.id : '';
-  document.getElementById('edit-name').value = s ? s.name : '';
-  document.getElementById('edit-duration').value = s ? s.duration : 4;
-  document.getElementById('edit-l1').value = s ? s.l1 : '';
-  document.getElementById('edit-l2').value = s ? s.l2 : '';
-  document.getElementById('edit-l3').value = s ? s.l3 : '';
-  document.getElementById('delete-btn').style.display = s ? 'inline-block' : 'none';
-  ['l1','l2','l3'].forEach(k => livePreview(document.getElementById('edit-'+k), document.getElementById('preview-'+k)));
-  document.getElementById('modal-bg').classList.add('show');
-}
-
-function closeModal() {
-  document.getElementById('modal-bg').classList.remove('show');
-}
-
-document.getElementById('add-btn').addEventListener('click', () => openModal(null));
-document.getElementById('cancel-btn').addEventListener('click', closeModal);
-
-document.getElementById('save-btn').addEventListener('click', () => {
-  const id = document.getElementById('edit-id').value;
-  const body = {
-    name: document.getElementById('edit-name').value || 'Screen',
-    l1: document.getElementById('edit-l1').value,
-    l2: document.getElementById('edit-l2').value,
-    l3: document.getElementById('edit-l3').value,
-    duration: parseFloat(document.getElementById('edit-duration').value) || 4,
-  };
-  const req = id
-    ? fetch('/api/screens/' + id, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
-    : fetch('/api/screens', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-  req.then(() => { closeModal(); loadScreens(); });
-});
-
-document.getElementById('delete-btn').addEventListener('click', () => {
-  const id = document.getElementById('edit-id').value;
-  if (!confirm('Удалить экран?')) return;
-  fetch('/api/screens/' + id, { method: 'DELETE' }).then(() => { closeModal(); loadScreens(); });
-});
-
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
-}
-
-buildLegend();
-loadScreens();
-</script>
-</body></html>
+        // Запуск
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
 """
 
 MANIFEST_JSON = {
@@ -361,21 +407,19 @@ SW_JS = """
 self.addEventListener('install', e => self.skipWaiting());
 self.addEventListener('activate', e => self.clients.claim());
 self.addEventListener('fetch', e => {
-  e.respondWith(fetch(e.request).catch(() => new Response('offline', {status: 503})));
+    e.respondWith(fetch(e.request).catch(() => new Response('offline', {status: 503})));
 });
 """
 
 
 def register_screens_routes(app, get_context):
-    import json as _json
-
     @app.route("/screens")
     def screens_page():
         return Response(SCREENS_PAGE_HTML, mimetype="text/html")
 
     @app.route("/manifest.json")
     def manifest():
-        return Response(_json.dumps(MANIFEST_JSON), mimetype="application/manifest+json")
+        return Response(json.dumps(MANIFEST_JSON), mimetype="application/manifest+json")
 
     @app.route("/sw.js")
     def service_worker():
@@ -388,12 +432,31 @@ def register_screens_routes(app, get_context):
     @app.route("/api/preview", methods=["POST"])
     def api_preview():
         body = request.get_json(force=True)
-        tpl = body.get("template", "")
-        unknown = templates.validate_template(tpl)
-        if unknown:
-            return jsonify({"rendered": "", "all_resolved": False, "unknown_vars": unknown})
-        rendered, ok = templates.render(tpl, get_context(), index=0)
-        return jsonify({"rendered": rendered, "all_resolved": ok, "unknown_vars": []})
+        ctx = get_context()
+        
+        results = {}
+        all_resolved = True
+        unknown_vars = set()
+        
+        for key in ("l1", "l2", "l3"):
+            tpl = body.get(key, "")
+            if not tpl:
+                results[f"rendered_{key}"] = ""
+                continue
+                
+            unk = templates.validate_template(tpl)
+            if unk:
+                unknown_vars.update(unk)
+                
+            rendered, ok = templates.render(tpl, ctx, index=0)
+            results[f"rendered_{key}"] = rendered
+            if not ok:
+                all_resolved = False
+                
+        if unknown_vars:
+            return jsonify({"rendered_l1": "", "rendered_l2": "", "rendered_l3": "", "all_resolved": False, "unknown_vars": list(unknown_vars)})
+            
+        return jsonify({**results, "all_resolved": all_resolved, "unknown_vars": []})
 
     @app.route("/api/screens", methods=["GET"])
     def api_screens_list():
