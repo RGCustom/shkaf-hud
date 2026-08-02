@@ -49,7 +49,10 @@
   <!-- Тайминги/интервалы -->
   <Config Name="Array refresh (sec)" Target="ARRAY_REFRESH_SECONDS" Default="60" Mode="" Description="Как часто пересчитывать занятое/свободное место" Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="Library refresh (sec)" Target="LIBRARY_REFRESH_SECONDS" Default="300" Mode="" Description="Как часто обновлять счётчики Movies/Series из Tautulli" Type="Variable" Display="advanced" Required="false" Mask="false"/>
-  <Config Name="Screen rotate (sec)" Target="SCREEN_ROTATE_SECONDS" Default="4" Mode="" Description="Через сколько секунд OLED переключает экран (LIB/поток N)" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Recently added: refresh (sec)" Target="RECENT_REFRESH_SECONDS" Default="120" Mode="" Description="Как часто опрашивать Tautulli на новые добавления" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Recently added: max age (days)" Target="RECENT_MAX_AGE_DAYS" Default="5" Mode="" Description="Не показывать добавленное старше N дней" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Recently added: count" Target="RECENT_COUNT" Default="5" Mode="" Description="Сколько последних добавлений запрашивать" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Full resync (sec)" Target="FULL_RESYNC_SECONDS" Default="30" Mode="" Description="Как часто слать Arduino полное состояние целиком (страховка на случай обрыва/перезагрузки платы)" Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="Poll interval (sec)" Target="POLL_INTERVAL" Default="1.0" Mode="" Description="Как часто слать данные на Pro Micro" Type="Variable" Display="advanced" Required="false" Mask="false"/>
 
   <!-- Serial (обычно трогать не нужно) -->
