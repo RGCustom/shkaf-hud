@@ -166,17 +166,16 @@ void parseLine(const String &line) {
 }
 
 // ---------------- LED бары ----------------
-
 // градиент по позиции в баре: 3 стопа c1(0%)->c2(50%)->c3(100%), интерполяция через blend()
 CRGB gradientColorForLevel(int barIndex, int level) {
-  float frac = (float)level / (LEDS_PER_BAR - 1);
-  if (frac <= 0.5) {
-    uint8_t amount = round((frac / 0.5) * 255);
-    return blend(barColors[barIndex][0], barColors[barIndex][1], amount);
-  } else {
-    uint8_t amount = round(((frac - 0.5) / 0.5) * 255);
-    return blend(barColors[barIndex][1], barColors[barIndex][2], amount);
-  }
+    float frac = (float)level / (LEDS_PER_BAR - 1);
+    uint8_t amount = round(frac * 255);
+
+    return blend(
+        barColors[barIndex][0],   // стартовый цвет
+        barColors[barIndex][1],   // конечный цвет
+        amount
+    );
 }
 
 void drawOneBar(int barIndex, int pct) {
