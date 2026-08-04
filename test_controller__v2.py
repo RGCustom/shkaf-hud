@@ -5,6 +5,9 @@ import serial.tools.list_ports
 import time
 import threading
 
+import ledbar
+import protocol
+
 class ProMicroTester:
     def __init__(self, root):
         self.root = root
@@ -223,8 +226,9 @@ class ProMicroTester:
         c1 = self.clean_hex(b['c1'].get())
         c2 = self.clean_hex(b['c2'].get())
         c3 = self.clean_hex(b['c3'].get())
-        solid = 1 if b['solid'].get() else 0
-        cmd = f"BAR{bar_index+1}:{pct},{c1},{c2},{c3},{solid}"
+        solid = b['solid'].get()
+        pixels = ledbar.compute_bar_pixels(pct, c1, c2, c3, solid)
+        cmd = f"BAR{bar_index+1}:{protocol.pack_bar_pixels(pixels)}"
         self.send_cmd(cmd)
 
     # --- REAL-TIME: вызывается при движении ползунка ---
@@ -253,8 +257,9 @@ class ProMicroTester:
             c1 = self.clean_hex(b['c1'].get())
             c2 = self.clean_hex(b['c2'].get())
             c3 = self.clean_hex(b['c3'].get())
-            solid = 1 if b['solid'].get() else 0
-            parts.append(f"BAR{i+1}:{pct},{c1},{c2},{c3},{solid}")
+            solid = b['solid'].get()
+            pixels = ledbar.compute_bar_pixels(pct, c1, c2, c3, solid)
+            parts.append(f"BAR{i+1}:{protocol.pack_bar_pixels(pixels)}")
 
         cmd = "|".join(parts)
         self.send_cmd(cmd)

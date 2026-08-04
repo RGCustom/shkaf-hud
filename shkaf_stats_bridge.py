@@ -35,6 +35,7 @@ import templates
 import screens
 import screens_webui
 import protocol
+import ledbar
 
 SCRIPT_VERSION = "2026-07-25-1"
 
@@ -641,8 +642,15 @@ function refresh() {
       if (!editingSolid[k]) document.getElementById("solid-" + k).checked = isSolidAt100;
       if (!editingColor[k]) stops.forEach(stop => document.getElementById(stop + "-" + k).value = "#" + c[stop]);
       if (isSolidAt100 && pct >= 100) {
+        // solid стоит и бар полон - сплошная заливка третьим цветом
         fill.style.background = "#" + c.c3;
+      } else if (isSolidAt100) {
+        // solid стоит, но ещё не 100% - градиент только c1 -> c2, c3 тут не участвует
+        fill.style.background = `linear-gradient(to top, #${c.c1}, #${c.c2})`;
+        fill.style.backgroundSize = "100% 130px";
+        fill.style.backgroundPosition = "bottom";
       } else {
+        // solid снята - как и раньше, обычный 3-стопный градиент c1 -> c2 -> c3
         fill.style.background = `linear-gradient(to top, #${c.c1}, #${c.c2}, #${c.c3})`;
         fill.style.backgroundSize = "100% 130px";
         fill.style.backgroundPosition = "bottom";
@@ -914,11 +922,14 @@ def main():
             state["bar2"], state["bar3"] = bar_pcts["bar2"], bar_pcts["bar3"]
 
         # ---- собрать протокол (только изменившееся) ----
+        # Градиент/solid-логика считается тут, на сервере (ledbar.py) - Arduino
+        # получает уже готовый цвет каждого светодиода и просто зажигает его.
         proto_values = {}
         for i, b in enumerate(("bar0", "bar1", "bar2", "bar3"), start=1):
-            proto_values[f"BAR{i}"] = protocol.pack_bar(
+            pixels = ledbar.compute_bar_pixels(
                 bar_pcts[b], colors[b]["c1"], colors[b]["c2"], colors[b]["c3"], solid[b]
             )
+            proto_values[f"BAR{i}"] = protocol.pack_bar_pixels(pixels)
         proto_values["BRI"] = str(brightness)
         proto_values["L1"], proto_values["L2"], proto_values["L3"] = lines
 

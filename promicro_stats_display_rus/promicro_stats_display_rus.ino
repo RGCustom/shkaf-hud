@@ -15,17 +15,21 @@ OLED_FONT_SIZE = 1..4
 
 Протокол прежний, pipe-delimited, только ИЗМЕНИВШИЕСЯ поля:
 
-BAR1:<pct>,<c1>,<c2>,<c3>,<0|1>
-BAR2:<pct>,<c1>,<c2>,<c3>,<0|1>
-BAR3:<pct>,<c1>,<c2>,<c3>,<0|1>
-BAR4:<pct>,<c1>,<c2>,<c3>,<0|1>
+BAR1:<48 hex-символов>   - 8 пикселей x RRGGBB, ПОДРЯД, без разделителей.
+BAR2:<48 hex-символов>     Цвет каждого светодиода уже посчитан на сервере
+BAR3:<48 hex-символов>     (градиент/solid-режим/яркость - вся эта логика
+BAR4:<48 hex-символов>     ушла с платы в Python). Плата просто раскладывает
+                           готовые 8 цветов по своим физическим диодам бара
+                           через LED_MAP - никакого blend()/интерполяции тут
+                           больше нет.
 BRI:<0-100>
 L1:<текст UTF-8>
 L2:<текст UTF-8>
 L3:<текст UTF-8>
 
-Пример:
-L1:Шкаф HUD|L2:CPU: 42%|L3:RAM: 63%
+Пример (BAR1 - 8 пикселей, первые 4 зелёные, дальше жёлтый/оранжевый, потом
+2 потушенных):
+BAR1:00FF0000FF0040FF0080FF00FFFF00FF8000000000000000|L1:Шкаф HUD
 
 Библиотеки: FastLED, U8g2.
 */
@@ -80,7 +84,11 @@ L1:Шкаф HUD|L2:CPU: 42%|L3:RAM: 63%
 #define OLED_TEMP_BUF 64
 
 // Входная команда по Serial.
-#define SERIAL_BUF_SIZE 208
+// Новый формат BAR (48 hex-символов на бар вместо "pct,c1,c2,c3,solid")
+// заметно длиннее старого, поэтому буфер увеличен со 208 до 320 - чтобы
+// полный ресинк (все 8 полей: 4хBAR+BRI+3хL) гарантированно влезал даже
+// с не самыми короткими текстами на OLED.
+#define SERIAL_BUF_SIZE 320
 
 // Чтобы не долбить I2C каждый цикл loop().
 #define OLED_REFRESH_MS 50
@@ -104,15 +112,12 @@ const uint8_t LED_MAP[NUM_LEDS] PROGMEM = {
  15, 14, 13, 12, 31, 30, 29, 28    // бар 4
 };
 
-uint8_t barPct[NUM_BARS] = { 0, 0, 0, 0 };
-bool barSolid[NUM_BARS] = { false, false, false, false };
-
-CRGB barColors[NUM_BARS][3] = {
-  { CRGB(0x00, 0xFF, 0x42), CRGB(0xFF, 0xF6, 0x00), CRGB(0xFF, 0x00, 0x00) },
-  { CRGB(0x00, 0xFF, 0x42), CRGB(0xFF, 0xF6, 0x00), CRGB(0xFF, 0x00, 0x00) },
-  { CRGB(0x00, 0xFF, 0x42), CRGB(0xFF, 0xF6, 0x00), CRGB(0xFF, 0x00, 0x00) },
-  { CRGB(0x00, 0xFF, 0x42), CRGB(0xFF, 0xF6, 0x00), CRGB(0xFF, 0x00, 0x00) },
-};
+// Готовый цвет каждого светодиода каждого бара - уже посчитан на сервере
+// (см. ledbar.py). Плата больше не знает ни про pct, ни про градиент, ни
+// про solid-режим - только про 32 конкретных цвета. Глобальные массивы
+// зануляются сами при старте (черный = потушено), этого достаточно как
+// безопасного значения по умолчанию до прихода первых данных.
+CRGB barPixels[NUM_BARS][LEDS_PER_BAR];
 
 uint8_t brightness = DEFAULT_BRIGHTNESS;
 
@@ -237,31 +242,16 @@ CRGB parseHex6(char **pp) {
   return CRGB((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
 }
 
+// val - 48 hex-символов подряд (8 пикселей x RRGGBB), без разделителей.
+// parseHex6 сам продвигает указатель ровно на 6 hex-цифр за вызов, так что
+// достаточно просто дёрнуть его 8 раз. Если данные пришли обрезанными -
+// parseHex6 на "пустом хвосте" просто вернёт чёрный (0,0,0), это безопасно.
 void parseBar(uint8_t idx, char *val) {
   char *p = val;
 
-  int pct = parseDec(&p);
-  if (*p != ',') return;
-  p++;
-
-  if (pct < 0) pct = 0;
-  if (pct > 100) pct = 100;
-  barPct[idx] = (uint8_t)pct;
-
-  barColors[idx][0] = parseHex6(&p);
-  if (*p != ',') return;
-  p++;
-
-  barColors[idx][1] = parseHex6(&p);
-  if (*p != ',') return;
-  p++;
-
-  barColors[idx][2] = parseHex6(&p);
-  if (*p != ',') return;
-  p++;
-
-  int solid = parseDec(&p);
-  barSolid[idx] = (solid == 1);
+  for (uint8_t level = 0; level < LEDS_PER_BAR; level++) {
+    barPixels[idx][level] = parseHex6(&p);
+  }
 }
 
 void setLine(uint8_t idx, const char *val) {
@@ -317,38 +307,19 @@ void parseLine(char *line) {
 
 // ---------------- LED бары ----------------
 
-CRGB gradientColorForLevel(uint8_t barIndex, uint8_t level) {
-  uint8_t amount = (uint8_t)(((uint16_t)level * 255) / (LEDS_PER_BAR - 1));
-  return blend(
-    barColors[barIndex][0],
-    barColors[barIndex][1],
-    amount
-  );
-}
-
-void drawOneBar(uint8_t barIndex, uint8_t pct) {
-  uint8_t lit = (uint8_t)(((uint16_t)pct * LEDS_PER_BAR + 50) / 100);
-  if (lit > LEDS_PER_BAR) lit = LEDS_PER_BAR;
-
+void drawOneBar(uint8_t barIndex) {
   for (uint8_t level = 0; level < LEDS_PER_BAR; level++) {
     uint8_t logicalPos = barIndex * LEDS_PER_BAR + level;
     uint8_t rawIndex = pgm_read_byte(&LED_MAP[logicalPos]);
-
-    if (level >= lit) {
-      leds[rawIndex] = CRGB::Black;
-    } else if (barSolid[barIndex] && pct >= 100) {
-      leds[rawIndex] = barColors[barIndex][2];
-    } else {
-      leds[rawIndex] = gradientColorForLevel(barIndex, level);
-    }
+    leds[rawIndex] = barPixels[barIndex][level];
   }
 }
 
 void drawBars() {
-  drawOneBar(0, barPct[0]);
-  drawOneBar(1, barPct[1]);
-  drawOneBar(2, barPct[2]);
-  drawOneBar(3, barPct[3]);
+  drawOneBar(0);
+  drawOneBar(1);
+  drawOneBar(2);
+  drawOneBar(3);
   FastLED.show();
 }
 
