@@ -36,6 +36,7 @@ import screens
 import screens_webui
 import protocol
 import ledbar
+import qbittorrent
 
 SCRIPT_VERSION = "2026-07-25-1"
 
@@ -890,7 +891,7 @@ def main():
             "plex": {"movies": movies, "series": series, "songs": songs},
             "streams": sessions,
             "recent": recent_items,
-            "qbt": [],
+            "qbt": qbittorrent.get_qbt_active(),
         }
         with _context_lock:
             _last_context.clear()
