@@ -36,6 +36,10 @@
   <Config Name="Tautulli URL" Target="TAUTULLI_URL" Default="http://127.0.0.1:8181" Mode="" Description="Адрес твоего Tautulli (локальный IP:порт)" Type="Variable" Display="always" Required="true" Mask="false"/>
   <Config Name="Tautulli API key" Target="TAUTULLI_API_KEY" Default="" Mode="" Description="Settings -> Web Interface -> API в Tautulli" Type="Variable" Display="always" Required="true" Mask="true"/>
 
+  <!-- qBittorrent -->
+  <Config Name="qBittorrent URL" Target="QBT_URL" Default="http://127.0.0.1:8080" Mode="" Description="Адрес твоего qBittorrent (локальный IP:порт)" Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="TqBittorrent API key" Target="QBT_API_KEY" Default="" Mode="" Description="Settings -> Web Interface -> API в qBittorrent" Type="Variable" Display="always" Required="true" Mask="true"/>
+
   <!-- Сеть: в host-режиме контейнер напрямую видит хостовые интерфейсы,
        поэтому никакого /proc-костыля не нужно -->
   <Config Name="Network interface" Target="NET_IFACE" Default="br0" Mode="" Description="Интерфейс для измерения сетевой нагрузки (br0/bond0 - смотри `ip a` на хосте)" Type="Variable" Display="always" Required="true" Mask="false"/>
