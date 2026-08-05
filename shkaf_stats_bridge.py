@@ -56,7 +56,7 @@ DISK_DEVICES = os.environ.get("DISK_DEVICES", "")
 ARRAY_PATH = os.environ.get("ARRAY_PATH", "/mnt/user")
 ARRAY_REFRESH_SECONDS = float(os.environ.get("ARRAY_REFRESH_SECONDS", "60"))
 
-BIGCACHE_PATH = os.environ.get("BIGCACHE_PATH", "/mnt/bigcache")
+CACHE_PATH = os.environ.get("CACHE_PATH", "/mnt/cache")
 CACHE_REFRESH_SECONDS = float(os.environ.get("CACHE_REFRESH_SECONDS", "60"))
 
 LIBRARY_REFRESH_SECONDS = float(os.environ.get("LIBRARY_REFRESH_SECONDS", "300"))
@@ -93,7 +93,7 @@ BAR_METRICS = {
     "net": "NET (общий, для LED)",
     "disk": "DISK %util",
     "array": "Array %",
-    "cache": "BigCache %",
+    "cache": "Cache %",
     "cputemp": "CPU temp",
 }
 
@@ -324,7 +324,7 @@ def read_array_usage_tb():
 
 def read_cache_usage():
     try:
-        st = os.statvfs(BIGCACHE_PATH)
+        st = os.statvfs(CACHE_PATH)
         total = st.f_frsize * st.f_blocks
         free = st.f_frsize * st.f_bavail
         tb = 10 ** 12

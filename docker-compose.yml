@@ -13,7 +13,7 @@ services:
 
     volumes:
       - "${ARRAY_PATH:-/mnt/user}:/mnt/user:ro"
-      - "${BIGCACHE_PATH:-/mnt/bigcache}:/mnt/bigcache:ro"
+      - "${CACHE_PATH:-/mnt/cache}:/mnt/cache:ro"
       - "./config:/config"
 
     env_file:

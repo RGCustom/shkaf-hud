@@ -126,7 +126,7 @@ docker compose up -d --build
 | `DISK_DEVICES` | пусто (автоопределение) | Список дисков через запятую для %util, напр. `sdb,sdc` |
 | `ARRAY_PATH` | `/mnt/user` | Точка монтирования массива |
 | `ARRAY_REFRESH_SECONDS` | `60` | Как часто пересчитывать место на массиве |
-| `BIGCACHE_PATH` | `/mnt/bigcache` | Точка монтирования пула BigCache |
+| `CACHE_PATH` | `/mnt/cache` | Точка монтирования пула BigCache |
 | `CACHE_REFRESH_SECONDS` | `60` | Как часто пересчитывать загрузку BigCache |
 | `CPU_TEMP_MAX_C` | `90` | Что считать 100% для LED-бара "температура CPU" |
 | `LIBRARY_REFRESH_SECONDS` | `300` | Как часто обновлять счётчики Movies/Series/Songs |

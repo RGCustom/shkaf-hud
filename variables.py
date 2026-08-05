@@ -100,7 +100,7 @@ VARIABLES = {
     "cpu_temp_c":  {"label": "Температура CPU, °C",      "group": "scalar", "resolver": _scalar("cpu_temp_c")},
     "disk_pct":    {"label": "%util дисков массива",     "group": "scalar", "resolver": _scalar("disk_pct")},
     "array_pct":   {"label": "Занято на массиве, %",     "group": "scalar", "resolver": _scalar("array_pct")},
-    "cache_pct":   {"label": "Занято на BigCache, %",    "group": "scalar", "resolver": _scalar("cache_pct")},
+    "cache_pct":   {"label": "Занято на cache, %",    "group": "scalar", "resolver": _scalar("cache_pct")},
     "free_tb":     {"label": "Свободно (array+cache), TB", "group": "scalar", "resolver": _scalar("free_tb")},
 
     # --- сеть, слот 1 ---
