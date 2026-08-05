@@ -30,7 +30,7 @@
 
   <!-- Массив (для df: занято/свободно места) -->
   <Config Name="Array path" Target="/mnt/user" Default="/mnt/user" Mode="ro" Description="Точка монтирования массива для подсчёта занятого/свободного места" Type="Path" Display="always" Required="true" Mask="false"/>
-  <Config Name="BigCache path" Target="/mnt/bigcache" Default="/mnt/bigcache" Mode="ro" Description="Точка монтирования пула BigCache для метрики его загрузки" Type="Path" Display="always" Required="false" Mask="false"/>
+  <Config Name="cache path" Target="/mnt/cache" Default="/mnt/cache" Mode="ro" Description="Точка монтирования пула cache для метрики его загрузки" Type="Path" Display="always" Required="false" Mask="false"/>
 
   <!-- Tautulli -->
   <Config Name="Tautulli URL" Target="TAUTULLI_URL" Default="http://127.0.0.1:8181" Mode="" Description="Адрес твоего Tautulli (локальный IP:порт)" Type="Variable" Display="always" Required="true" Mask="false"/>
@@ -44,7 +44,7 @@
        поэтому никакого /proc-костыля не нужно -->
   <Config Name="Network interface" Target="NET_IFACE" Default="br0" Mode="" Description="Интерфейс для измерения сетевой нагрузки (br0/bond0 - смотри `ip a` на хосте)" Type="Variable" Display="always" Required="true" Mask="false"/>
   <Config Name="Network max Mbps" Target="NET_MAX_MBPS" Default="300" Mode="" Description="Что считать 100% на шкале сети" Type="Variable" Display="always" Required="true" Mask="false"/>
-  <Config Name="BigCache refresh (sec)" Target="CACHE_REFRESH_SECONDS" Default="60" Mode="" Description="Как часто пересчитывать загрузку BigCache" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="cache refresh (sec)" Target="CACHE_REFRESH_SECONDS" Default="60" Mode="" Description="Как часто пересчитывать загрузку cache" Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="CPU temp max (C)" Target="CPU_TEMP_MAX_C" Default="90" Mode="" Description="Что считать 100% на шкале температуры CPU" Type="Variable" Display="advanced" Required="false" Mask="false"/>
 
   <!-- Диски -->
