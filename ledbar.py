@@ -25,7 +25,7 @@ ledbar.py
   - Уровни выше "заполненности" (level >= lit) - всегда чёрные (погашены).
 """
 
-LEDS_PER_BAR = 8  # должно совпадать с #define LEDS_PER_BAR в .ino
+LEDS_PER_BAR = 12  # должно совпадать с #define LEDS_PER_BAR в .ino
 
 
 def _hex_to_rgb(hex_str):
