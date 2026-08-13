@@ -13,7 +13,7 @@
   <WebUI>http://[IP]:[PORT:8189]/</WebUI>
   <TemplateURL/>
   <Icon>https://raw.githubusercontent.com/RGCustom/shkaf-hud/main/icon.png</Icon>
-  <ExtraParams/>
+  <ExtraParams>-v /dev:/dev --device-cgroup-rule='c 166:* rmw'</ExtraParams>
   <PostArgs/>
   <CPUset/>
   <DateInstalled/>
