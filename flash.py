@@ -58,20 +58,43 @@ def touch_1200bps_reset(port):
         raise FlashError(f"не удалось открыть {port} на 1200 бод (touch): {e}")
 
 
-def wait_for_bootloader_port(before_ports, timeout=BOOTLOADER_WAIT_TIMEOUT):
-    """Ждём, пока в /dev не появится новый ttyACM-узел, которого не было
-    в before_ports. Возвращает путь к нему или бросает FlashError по таймауту."""
+def wait_for_bootloader_port(before_ports, original_device, timeout=BOOTLOADER_WAIT_TIMEOUT):
+    """
+    Ждём, пока плата поднимется в режиме бутлоадера. Есть два возможных
+    сценария после touch (нумерация ttyACM после сброса не детерминирована):
+
+      1. Плата поднимается под НОВЫМ именем (например была ttyACM0, стала
+         ttyACM1) - тогда просто ловим появление узла, которого не было
+         в before_ports.
+      2. Плата пропадает и появляется снова под ТЕМ ЖЕ именем (ttyACM0
+         исчез на время сброса и снова стал ttyACM0) - тогда "новых" имён
+         не появится никогда, нужно отдельно отследить, что original_device
+         пропадал из списка, а потом вернулся - это и есть сигнал готовности.
+
+    Возвращает путь к bootloader-порту или бросает FlashError по таймауту.
+    """
     deadline = time.time() + timeout
+    seen_disappear = False
+
     while time.time() < deadline:
         now_ports = list_acm_ports()
+
         new_ports = now_ports - before_ports
         if new_ports:
-            # обычно новый узел ровно один - если вдруг несколько, берём первый
+            # сценарий 1 - под новым именем
             return sorted(new_ports)[0]
+
+        if original_device not in now_ports:
+            seen_disappear = True
+        elif seen_disappear:
+            # сценарий 2 - пропадал и вернулся под тем же именем
+            return original_device
+
         time.sleep(BOOTLOADER_POLL_INTERVAL)
+
     raise FlashError(
         "плата не вошла в режим прошивки за отведённое время "
-        "(не нашли новый /dev/ttyACM* после touch на 1200 бод)"
+        "(после touch на 1200 бод порт не пропадал/не появлялся заново)"
     )
 
 
@@ -101,12 +124,16 @@ def flash(hex_path, serial_port, mcu="atmega32u4", cancel_event=None):
 
     yield f"Ищу плату на {serial_port}..."
     before_ports = list_acm_ports()
+    # резолвим by-id symlink в реальный /dev/ttyACMx СЕЙЧАС, пока он жив -
+    # после touch и сброса платы сам symlink на секунды пропадёт вместе
+    # с устройством, и его будет уже не резолвнуть.
+    original_device = os.path.realpath(serial_port)
 
     yield "Отправляю сигнал перезагрузки в бутлоадер (1200 бод touch)..."
     touch_1200bps_reset(serial_port)
 
     yield "Жду появления bootloader-порта..."
-    bootloader_port = wait_for_bootloader_port(before_ports)
+    bootloader_port = wait_for_bootloader_port(before_ports, original_device)
     yield f"Бутлоадер поднялся на {bootloader_port}, жду {BOOTLOADER_SETTLE_DELAY:.1f}с..."
     time.sleep(BOOTLOADER_SETTLE_DELAY)
 
