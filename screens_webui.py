@@ -97,7 +97,7 @@ SCREENS_PAGE_HTML = """<!doctype html>
 <body>
 <div class="wrap">
   <div class="brand"><span class="dot"></span><h1>shkaf-hud</h1></div>
-  <div class="nav"><a href="/">Sensors</a><a href="/screens" class="active">OLED screens</a></div>
+  <div class="nav"><a href="/">Sensors</a><a href="/screens" class="active">OLED screens</a><a href="/flash">Flash</a></div>
 
   <div class="card">
     <div id="screen-list"></div>

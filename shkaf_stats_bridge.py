@@ -37,6 +37,7 @@ import screens_webui
 import protocol
 import ledbar
 import qbittorrent
+import flash_webui
 
 SCRIPT_VERSION = "2026-07-25-1"
 
@@ -102,6 +103,7 @@ DEFAULT_SETTINGS = {
     "assignment": DEFAULT_ASSIGNMENT,
     "brightness": DEFAULT_BRIGHTNESS,
     "solid": DEFAULT_SOLID,
+    "contrast": 255,
     "net1_iface": "",
     "net2_iface": "",
 }
@@ -149,6 +151,11 @@ state = {
 # последний известный context - для /api/preview на странице /screens
 _last_context = {}
 _context_lock = threading.Lock()
+
+# Установлен, пока идёт заливка прошивки через /api/flash - на это время
+# главный цикл не открывает и не пишет в serial-порт платы (см. main()),
+# чтобы avrdude и bridge не дрались за один и тот же USB-порт одновременно.
+flashing_event = threading.Event()
 
 
 def get_context():
@@ -496,7 +503,7 @@ SENSORS_PAGE_HTML = """<!doctype html>
 <body>
 <div class="wrap">
   <div class="brand"><span class="dot"></span><h1>shkaf-hud</h1></div>
-  <div class="nav"><a href="/" class="active">Sensors</a><a href="/screens">OLED screens</a></div>
+  <div class="nav"><a href="/" class="active">Sensors</a><a href="/screens">OLED screens</a><a href="/flash">Flash</a></div>
 
   <div class="banner" id="banner"><span class="b-dot"></span>
     Pro Micro не подключена - лента и OLED не обновляются, статистика продолжает собираться</div>
@@ -535,6 +542,11 @@ SENSORS_PAGE_HTML = """<!doctype html>
   <div class="card">
     <h2>OLED (текущий экран)</h2>
     <div style="background:#000;color:#7fd8ff;font-family:monospace;font-size:18px;padding:16px;border-radius:8px;line-height:1.5" id="oled"></div>
+    <div class="brightness-row">
+      <label>Контраст</label>
+      <input type="range" id="contrast" min="0" max="255" value="255">
+      <span class="val" id="contrast-val">255</span>
+    </div>
   </div>
 
   <div class="card">
@@ -549,7 +561,7 @@ SENSORS_PAGE_HTML = """<!doctype html>
 <script>
 const bars = ["bar0","bar1","bar2","bar3"];
 const stops = ["c1","c2","c3"];
-let editingColor = {}, editingSolid = {}, editingBrightness = false, editingIfaces = false;
+let editingColor = {}, editingSolid = {}, editingBrightness = false, editingContrast = false, editingIfaces = false;
 let metricsPopulated = false, ifacesPopulated = false;
 
 bars.forEach(k => {
@@ -575,6 +587,16 @@ brightnessEl.addEventListener("input", () => {
 brightnessEl.addEventListener("change", () => {
   fetch("/api/brightness", { method: "POST", headers: {"Content-Type":"application/json"},
     body: JSON.stringify({ value: parseInt(brightnessEl.value) }) }).then(() => editingBrightness = false);
+});
+
+const contrastEl = document.getElementById("contrast");
+contrastEl.addEventListener("input", () => {
+  editingContrast = true;
+  document.getElementById("contrast-val").textContent = contrastEl.value;
+});
+contrastEl.addEventListener("change", () => {
+  fetch("/api/contrast", { method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ value: parseInt(contrastEl.value) }) }).then(() => editingContrast = false);
 });
 
 function sendColors(k) {
@@ -665,6 +687,11 @@ function refresh() {
       document.getElementById("brightness-val").textContent = s.cfg.brightness + "%";
     }
 
+    if (!editingContrast) {
+      contrastEl.value = s.cfg.contrast;
+      document.getElementById("contrast-val").textContent = s.cfg.contrast;
+    }
+
     document.getElementById("oled").innerHTML = s.oled_lines.map(l => l || "&nbsp;").join("<br>");
   });
 }
@@ -725,6 +752,15 @@ def api_brightness():
     return jsonify({"ok": True})
 
 
+@app.route("/api/contrast", methods=["POST"])
+def api_contrast():
+    body = request.get_json(force=True)
+    with state_lock:
+        state["cfg"]["contrast"] = max(0, min(255, int(body.get("value", state["cfg"]["contrast"]))))
+        save_settings(state["cfg"])
+    return jsonify({"ok": True})
+
+
 @app.route("/api/solid", methods=["POST"])
 def api_solid():
     body = request.get_json(force=True)
@@ -749,6 +785,7 @@ def api_net_ifaces():
 
 
 screens_webui.register_screens_routes(app, get_context)
+flash_webui.register_flash_routes(app, SERIAL_PORT, flashing_event)
 
 
 def run_web():
@@ -913,6 +950,7 @@ def main():
             assignment = state["cfg"]["assignment"]
             brightness = state["cfg"]["brightness"]
             solid = state["cfg"]["solid"]
+            contrast = state["cfg"]["contrast"]
 
         bar_pcts = {}
         for b in ("bar0", "bar1", "bar2", "bar3"):
@@ -932,11 +970,24 @@ def main():
             )
             proto_values[f"BAR{i}"] = protocol.pack_bar_pixels(pixels)
         proto_values["BRI"] = str(brightness)
+        proto_values["CON"] = str(contrast)
         proto_values["L1"], proto_values["L2"], proto_values["L3"] = lines
 
         line_to_send = proto.build(proto_values, now=now)
 
-        if ser is not None:
+        if flashing_event.is_set():
+            # идёт заливка прошивки через /api/flash - avrdude сейчас сам
+            # владеет USB-портом платы, ни писать, ни переподключаться нельзя.
+            if ser is not None:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+                ser = None
+                with state_lock:
+                    state["serial_connected"] = False
+            last_reconnect_attempt = now
+        elif ser is not None:
             if line_to_send is not None:
                 try:
                     ser.write((line_to_send + "\n").encode("utf-8"))
