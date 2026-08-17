@@ -17,8 +17,8 @@ PWA) для настройки лент, цветов и OLED-экранов.
 - Цвета каждого из 3 стопов — отдельным пикером на бар
 - Чекбокс "цвет на 100%" — при достижении 100% бар заливается финальным
   цветом сплошняком вместо градиента; выключен по умолчанию (градиент всегда)
-- На каждый бар назначается любая метрика: CPU / RAM / NET / DISK %util /
-  Array % / BigCache % / температура CPU
+- На каждый бар назначается любая метрика: CPU / RAM / SWAP / NET / DISK %util /
+  Array % / BigCache % / температура CPU / qBittorrent DL / qBittorrent UL
 - Общая яркость ленты — один слайдер
 
 **OLED (128×64 SSD1306, I2C)** — конструктор экранов через `/screens`:
@@ -40,6 +40,23 @@ PWA) для настройки лент, цветов и OLED-экранов.
 Дефолтный набор из 7 экранов уже настроен из коробки: Storage, CPU/RAM,
 Network 1, Network 2, Plex, Streams (по потоку на каждый активный), RecentAdd
 (по недавнему добавлению) — редактируется/расширяется на `/screens`.
+
+Кроме дефолтных экранов доступен расширенный набор переменных (полный список
+с легендой — прямо на `/screens`), без необходимости монтировать что-то ещё
+в контейнер:
+
+- **Система**: `load1/5/15`, `cpu_freq_mhz`, `cpu_pct_core_max`, `ram_used_gb`/
+  `ram_total_gb`, `swap_pct`, `uptime` (хост), `container_uptime`, `time_now`
+- **Диски/массив**: `array_used_tb`/`array_total_tb`, `cache_free_tb`/
+  `cache_total_tb` (раздельно от общего `free_tb`)
+- **Сеть**: `net1_total_rx`/`net1_total_tx` (накоплено с запуска), `net1_conn_count`
+  (активных TCP-соединений на интерфейсе) — и то же для `net2_*`
+- **qBittorrent**: `qbt_total_dl`/`qbt_total_ul` (суммарно по всем торрентам,
+  не только активным), `qbt_count_all`, `qbt_ratio`, `qbt_free_space_gb`
+- **Plex/Tautulli**: `stream_bandwidth` (нагрузка на сеть от конкретного
+  стрима), `plex_transcode_count`, `plex_users_count`, `plex_server_status`
+  (online/offline — виден именно недоступный Tautulli, а не просто "нет
+  активных стримов")
 
 OLED работает на U8g2 в постраничном режиме (кириллический шрифт,
 `u8g2_font_*_cyrillic`) — названия фильмов/сериалов на русском отображаются
@@ -125,6 +142,7 @@ docker compose up -d --build
 | `TAUTULLI_API_KEY` | - | Settings → Web Interface → API в Tautulli |
 | `QBT_URL` | `http://127.0.0.1:8080` | Адрес WebUI qBittorrent |
 | `QBT_API_KEY` | - | Пусто = интеграция выключена. Settings → WebUI → API Key → Generate (qBittorrent ≥ 5.2.0 / WebAPI ≥ 2.14.1) |
+| `QBT_MAX_MBPS` | `100` | Что считать 100% на LED-барах `qbt_dl`/`qbt_ul` (суммарная скорость закачки/раздачи по всем торрентам) |
 | `NET_IFACE` | `br0` | Интерфейс для LED-бара с метрикой "NET" (общая нагрузка) |
 | `NET_MAX_MBPS` | `500` | Что считать 100% на LED-баре "NET" |
 | `DISK_DEVICES` | пусто (автоопределение) | Список дисков через запятую для %util, напр. `sdb,sdc` |

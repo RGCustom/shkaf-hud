@@ -96,12 +96,27 @@ def _position():
 VARIABLES = {
     # --- система ---
     "cpu_pct":     {"label": "Загрузка CPU, %",         "group": "scalar", "resolver": _scalar("cpu_pct")},
+    "cpu_pct_core_max": {"label": "Загрузка самого нагруженного ядра, %", "group": "scalar", "resolver": _scalar("cpu_pct_core_max")},
+    "cpu_freq_mhz": {"label": "Частота CPU, МГц (среднее по ядрам)", "group": "scalar", "resolver": _scalar("cpu_freq_mhz")},
     "ram_pct":     {"label": "Загрузка RAM, %",          "group": "scalar", "resolver": _scalar("ram_pct")},
+    "ram_used_gb": {"label": "RAM занято, GB",           "group": "scalar", "resolver": _scalar("ram_used_gb")},
+    "ram_total_gb": {"label": "RAM всего, GB",           "group": "scalar", "resolver": _scalar("ram_total_gb")},
+    "swap_pct":    {"label": "Загрузка SWAP, %",         "group": "scalar", "resolver": _scalar("swap_pct")},
+    "load1":       {"label": "Load average, 1 мин",      "group": "scalar", "resolver": _scalar("load1")},
+    "load5":       {"label": "Load average, 5 мин",      "group": "scalar", "resolver": _scalar("load5")},
+    "load15":      {"label": "Load average, 15 мин",     "group": "scalar", "resolver": _scalar("load15")},
     "cpu_temp_c":  {"label": "Температура CPU, °C",      "group": "scalar", "resolver": _scalar("cpu_temp_c")},
     "disk_pct":    {"label": "%util дисков массива",     "group": "scalar", "resolver": _scalar("disk_pct")},
     "array_pct":   {"label": "Занято на массиве, %",     "group": "scalar", "resolver": _scalar("array_pct")},
+    "array_used_tb": {"label": "Массив занято, TB",      "group": "scalar", "resolver": _scalar("array_used_tb")},
+    "array_total_tb": {"label": "Массив всего, TB",      "group": "scalar", "resolver": _scalar("array_total_tb")},
     "cache_pct":   {"label": "Занято на cache, %",    "group": "scalar", "resolver": _scalar("cache_pct")},
+    "cache_free_tb": {"label": "Cache свободно, TB",     "group": "scalar", "resolver": _scalar("cache_free_tb")},
+    "cache_total_tb": {"label": "Cache всего, TB",       "group": "scalar", "resolver": _scalar("cache_total_tb")},
     "free_tb":     {"label": "Свободно (array+cache), TB", "group": "scalar", "resolver": _scalar("free_tb")},
+    "uptime":      {"label": "Аптайм хоста",             "group": "scalar", "resolver": _scalar("uptime")},
+    "container_uptime": {"label": "Аптайм контейнера shkaf-hud", "group": "scalar", "resolver": _scalar("container_uptime")},
+    "time_now":    {"label": "Текущее время (ЧЧ:ММ)",    "group": "scalar", "resolver": _scalar("time_now")},
 
     # --- сеть, слот 1 ---
     "net1_name":   {"label": "Net1: имя интерфейса",     "group": "scalar", "resolver": _net_field("net1", "name")},
@@ -109,6 +124,9 @@ VARIABLES = {
     "net1_ip":     {"label": "Net1: IP-адрес",           "group": "scalar", "resolver": _net_field("net1", "ip")},
     "net1_rx":     {"label": "Net1: входящая скорость",  "group": "scalar", "resolver": _net_field("net1", "rx")},
     "net1_tx":     {"label": "Net1: исходящая скорость", "group": "scalar", "resolver": _net_field("net1", "tx")},
+    "net1_total_rx": {"label": "Net1: накоплено принято (с запуска)", "group": "scalar", "resolver": _net_field("net1", "total_rx")},
+    "net1_total_tx": {"label": "Net1: накоплено отдано (с запуска)",  "group": "scalar", "resolver": _net_field("net1", "total_tx")},
+    "net1_conn_count": {"label": "Net1: активных TCP-соединений",     "group": "scalar", "resolver": _net_field("net1", "conn_count")},
 
     # --- сеть, слот 2 ---
     "net2_name":   {"label": "Net2: имя интерфейса",     "group": "scalar", "resolver": _net_field("net2", "name")},
@@ -116,17 +134,24 @@ VARIABLES = {
     "net2_ip":     {"label": "Net2: IP-адрес",           "group": "scalar", "resolver": _net_field("net2", "ip")},
     "net2_rx":     {"label": "Net2: входящая скорость",  "group": "scalar", "resolver": _net_field("net2", "rx")},
     "net2_tx":     {"label": "Net2: исходящая скорость", "group": "scalar", "resolver": _net_field("net2", "tx")},
+    "net2_total_rx": {"label": "Net2: накоплено принято (с запуска)", "group": "scalar", "resolver": _net_field("net2", "total_rx")},
+    "net2_total_tx": {"label": "Net2: накоплено отдано (с запуска)",  "group": "scalar", "resolver": _net_field("net2", "total_tx")},
+    "net2_conn_count": {"label": "Net2: активных TCP-соединений",     "group": "scalar", "resolver": _net_field("net2", "conn_count")},
 
     # --- Plex/Tautulli: библиотека ---
     "plex_movies": {"label": "Кол-во фильмов",           "group": "scalar", "resolver": _scalar("plex.movies")},
     "plex_series": {"label": "Кол-во сериалов",          "group": "scalar", "resolver": _scalar("plex.series")},
     "plex_songs":  {"label": "Кол-во треков",            "group": "scalar", "resolver": _scalar("plex.songs")},
+    "plex_server_status": {"label": "Статус Tautulli (online/offline)", "group": "scalar", "resolver": _scalar("plex_server_status")},
+    "plex_transcode_count": {"label": "Сколько стримов сейчас транскодируется", "group": "scalar", "resolver": _scalar("plex_transcode_count")},
+    "plex_users_count": {"label": "Сколько разных пользователей смотрит", "group": "scalar", "resolver": _scalar("plex_users_count")},
 
     # --- Plex/Tautulli: активные стримы (повторяющаяся группа, до 5 штук) ---
     "stream_user":     {"label": "Стрим: пользователь",        "group": "stream", "resolver": _list_field("streams", "user")},
     "stream_progress": {"label": "Стрим: прогресс, %",         "group": "stream", "resolver": _list_field("streams", "progress")},
     "stream_mode":      {"label": "Стрим: D=direct, T=transcode", "group": "stream", "resolver": _list_field("streams", "mode")},
     "stream_title":     {"label": "Стрим: название",           "group": "stream", "resolver": _list_field("streams", "title")},
+    "stream_bandwidth": {"label": "Стрим: нагрузка на сеть",   "group": "stream", "resolver": _list_field("streams", "bandwidth")},
     "stream_pos":       {"label": "Стрим: № по счёту (1-based)", "group": "stream", "resolver": _position()},
     "stream_count":      {"label": "Стрим: сколько сейчас активно", "group": "scalar", "resolver": _count("streams")},
 
@@ -143,6 +168,13 @@ VARIABLES = {
     "qbt_eta":   {"label": "Торрент: осталось времени", "group": "qbt", "resolver": _list_field("qbt", "eta")},
     "qbt_pos":   {"label": "Торрент: № по счёту (1-based)", "group": "qbt", "resolver": _position()},
     "qbt_count":  {"label": "Торрент: сколько активно", "group": "scalar", "resolver": _count("qbt")},
+
+    # --- qBittorrent: сводные показатели по ВСЕМ торрентам (не только активным) ---
+    "qbt_total_dl": {"label": "qBittorrent: суммарная скорость закачки", "group": "scalar", "resolver": _scalar("qbt_total_dl")},
+    "qbt_total_ul": {"label": "qBittorrent: суммарная скорость раздачи", "group": "scalar", "resolver": _scalar("qbt_total_ul")},
+    "qbt_count_all": {"label": "qBittorrent: торрентов всего в клиенте", "group": "scalar", "resolver": _scalar("qbt_count_all")},
+    "qbt_ratio":    {"label": "qBittorrent: общий ratio",               "group": "scalar", "resolver": _scalar("qbt_ratio")},
+    "qbt_free_space_gb": {"label": "qBittorrent: свободно места на диске загрузок", "group": "scalar", "resolver": _scalar("qbt_free_space_gb")},
 }
 
 # Группы, которые "разворачиваются" в несколько экранов (по числу элементов).

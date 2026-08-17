@@ -24,6 +24,7 @@ import time
 import socket
 import fcntl
 import struct
+import datetime
 import threading
 
 import serial
@@ -39,7 +40,11 @@ import ledbar
 import qbittorrent
 import flash_webui
 
-SCRIPT_VERSION = "2026-07-25-1"
+SCRIPT_VERSION = "2026-08-17-1"
+
+# Момент старта процесса - для переменной container_uptime (аптайм самого
+# контейнера, в отличие от uptime - аптайма хоста из /proc/uptime).
+CONTAINER_START_TIME = time.time()
 
 # ---------------- КОНФИГ (через переменные окружения) ----------------
 
@@ -96,6 +101,7 @@ BAR_METRICS = {
     "array": "Array %",
     "cache": "Cache %",
     "cputemp": "CPU temp",
+    "swap": "SWAP %",
 }
 
 DEFAULT_SETTINGS = {
@@ -174,15 +180,118 @@ def read_cpu_times():
     return idle, total
 
 
-def read_ram_percent():
+def read_per_core_times():
+    """{'cpu0': (idle, total), 'cpu1': (...), ...} - как read_cpu_times(), но
+    по каждому ядру отдельно (в /proc/stat помимо общей строки 'cpu' идут
+    построчно 'cpu0', 'cpu1', ...)."""
+    times = {}
+    try:
+        with open("/proc/stat") as f:
+            for line in f:
+                if line.startswith("cpu") and len(line) > 3 and line[3].isdigit():
+                    parts = line.split()
+                    vals = list(map(int, parts[1:]))
+                    idle = vals[3] + vals[4]
+                    total = sum(vals)
+                    times[parts[0]] = (idle, total)
+    except Exception:
+        pass
+    return times
+
+
+def compute_max_core_pct(prev_times, curr_times):
+    """Загрузка самого нагруженного ядра между двумя снятыми снапшотами -
+    в отличие от cpu_pct (среднее по всем ядрам), показывает, есть ли
+    процесс, упирающийся в одно ядро."""
+    max_pct = 0.0
+    for name, (curr_idle, curr_total) in curr_times.items():
+        prev = prev_times.get(name)
+        if prev is None:
+            continue
+        prev_idle, prev_total = prev
+        d_idle = curr_idle - prev_idle
+        d_total = curr_total - prev_total
+        if d_total <= 0:
+            continue
+        pct = (1 - d_idle / d_total) * 100.0
+        max_pct = max(max_pct, pct)
+    return max_pct
+
+
+def read_ram_details():
+    """Возвращает (pct, used_gb, total_gb) - раньше была только read_ram_percent()."""
     meminfo = {}
     with open("/proc/meminfo") as f:
         for line in f:
             key, val = line.split(":")
             meminfo[key.strip()] = int(val.strip().split()[0])
-    total = meminfo.get("MemTotal", 1)
-    available = meminfo.get("MemAvailable", total)
-    return max(0.0, min(100.0, (total - available) / total * 100.0))
+    total_kb = meminfo.get("MemTotal", 1)
+    available_kb = meminfo.get("MemAvailable", total_kb)
+    used_kb = max(0, total_kb - available_kb)
+    pct = max(0.0, min(100.0, used_kb / total_kb * 100.0)) if total_kb else 0.0
+    return pct, round(used_kb / 1_048_576, 1), round(total_kb / 1_048_576, 1)
+
+
+def read_swap_percent():
+    meminfo = {}
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                key, val = line.split(":")
+                meminfo[key.strip()] = int(val.strip().split()[0])
+    except Exception:
+        return 0.0
+    total = meminfo.get("SwapTotal", 0)
+    free = meminfo.get("SwapFree", 0)
+    if total <= 0:
+        return 0.0
+    return max(0.0, min(100.0, (total - free) / total * 100.0))
+
+
+def read_load_avg():
+    """(load1, load5, load15) из /proc/loadavg."""
+    try:
+        with open("/proc/loadavg") as f:
+            parts = f.read().split()
+        return float(parts[0]), float(parts[1]), float(parts[2])
+    except Exception:
+        return 0.0, 0.0, 0.0
+
+
+def read_cpu_freq_mhz():
+    """Средняя частота по ядрам, МГц (None, если /proc/cpuinfo не отдаёт cpu MHz)."""
+    try:
+        freqs = []
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("cpu MHz"):
+                    freqs.append(float(line.split(":")[1].strip()))
+        if freqs:
+            return round(sum(freqs) / len(freqs))
+    except Exception:
+        pass
+    return None
+
+
+def read_uptime_seconds():
+    try:
+        with open("/proc/uptime") as f:
+            return float(f.read().split()[0])
+    except Exception:
+        return 0.0
+
+
+def format_duration(seconds):
+    """Компактный формат аптайма: '5d 3h', '2h 14m', '47m'."""
+    seconds = max(0, int(seconds))
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+    if days > 0:
+        return f"{days}d {hours}h"
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
 
 
 def read_cpu_temp_c():
@@ -289,6 +398,52 @@ def format_rate(bytes_delta, dt):
     return f"{kbps:.0f}Kbps"
 
 
+def format_bytes_total(bytes_val):
+    """Накопленный трафик (не скорость) - для net1_total_rx/tx и т.п."""
+    if bytes_val is None or bytes_val < 0:
+        return "0MB"
+    gb = bytes_val / (1024 ** 3)
+    if gb >= 1:
+        return f"{gb:.1f}GB"
+    mb = bytes_val / (1024 ** 2)
+    return f"{mb:.0f}MB"
+
+
+def _ipv4_to_proc_hex(ip):
+    """127.0.0.1 -> '0100007F' - формат локального адреса в /proc/net/tcp
+    (little-endian hex, как ядро его пишет)."""
+    parts = ip.split(".")
+    if len(parts) != 4:
+        return None
+    try:
+        return "".join(f"{int(p):02X}" for p in reversed(parts))
+    except ValueError:
+        return None
+
+
+def count_established_connections(ip):
+    """Сколько сейчас ESTABLISHED TCP-соединений с локальным адресом ip
+    (то есть привязанных к конкретному сетевому интерфейсу). Только IPv4 -
+    для host-режима на типичном Unraid-сетапе этого достаточно."""
+    hex_ip = _ipv4_to_proc_hex(ip) if ip else None
+    if hex_ip is None:
+        return None
+    count = 0
+    try:
+        with open("/proc/net/tcp") as f:
+            next(f)  # заголовок
+            for line in f:
+                fields = line.split()
+                if len(fields) < 4:
+                    continue
+                local_ip, state = fields[1].split(":")[0], fields[3]
+                if state == "01" and local_ip == hex_ip:  # 01 = ESTABLISHED
+                    count += 1
+    except Exception:
+        return None
+    return count
+
+
 def list_disk_devices():
     if DISK_DEVICES.strip():
         return set(x.strip() for x in DISK_DEVICES.split(","))
@@ -330,16 +485,18 @@ def read_array_usage_tb():
 
 
 def read_cache_usage():
+    """Возвращает (pct, free_tb, total_tb)."""
     try:
         st = os.statvfs(CACHE_PATH)
         total = st.f_frsize * st.f_blocks
         free = st.f_frsize * st.f_bavail
         tb = 10 ** 12
+        total_tb = round(total / tb, 2)
         free_tb = round(free / tb, 2)
         pct = round((total - free) / total * 100) if total > 0 else 0
-        return pct, free_tb
+        return pct, free_tb, total_tb
     except Exception:
-        return 0, 0.0
+        return 0, 0.0, 0.0
 
 
 # ---------------- Tautulli ----------------
@@ -812,7 +969,7 @@ def main():
 
     movies, series, songs = get_library_counts()
     total_tb, free_tb_array, arr_pct = read_array_usage_tb()
-    cache_pct, free_tb_cache = read_cache_usage()
+    cache_pct, free_tb_cache, cache_total_tb = read_cache_usage()
     last_library_refresh = time.time()
     last_array_refresh = time.time()
     last_cache_refresh = time.time()
@@ -820,8 +977,14 @@ def main():
     recent_items = []
     last_recent_refresh = 0.0
 
+    prev_core_times = read_per_core_times()
+
     prev_net1_iface, prev_net2_iface = None, None
     prev_net1_rx = prev_net1_tx = prev_net2_rx = prev_net2_tx = None
+    # base_rx/base_tx - точка отсчёта для накопленного трафика (net1_total_rx и
+    # т.п.): фиксируется на первом успешном чтении интерфейса и сбрасывается
+    # при смене выбранного интерфейса (аналогично prev_net1_rx выше).
+    net1_base_rx = net1_base_tx = net2_base_rx = net2_base_tx = None
 
     rotation = screens.RotationState()
     proto = protocol.ProtocolState(full_resync_seconds=FULL_RESYNC_SECONDS)
@@ -839,8 +1002,22 @@ def main():
         cpu_pct = 0.0 if d_total == 0 else (1 - d_idle / d_total) * 100.0
         prev_idle, prev_total = idle, total
 
-        # RAM %
-        ram_pct = read_ram_percent()
+        # RAM % + абсолютные ГБ
+        ram_pct, ram_used_gb, ram_total_gb = read_ram_details()
+
+        # SWAP %
+        swap_pct = read_swap_percent()
+
+        # Load average (1/5/15 мин)
+        load1, load5, load15 = read_load_avg()
+
+        # Частота CPU (среднее по ядрам, МГц)
+        cpu_freq_mhz = read_cpu_freq_mhz()
+
+        # Загрузка самого нагруженного ядра (в отличие от cpu_pct - среднего по всем)
+        curr_core_times = read_per_core_times()
+        cpu_pct_core_max = compute_max_core_pct(prev_core_times, curr_core_times)
+        prev_core_times = curr_core_times
 
         # NET % (общий, для LED бара, если на него назначена метрика "net")
         net_bytes = read_net_bytes(NET_IFACE)
@@ -873,7 +1050,7 @@ def main():
             total_tb, free_tb_array, arr_pct = read_array_usage_tb()
             last_array_refresh = now
         if now - last_cache_refresh > CACHE_REFRESH_SECONDS:
-            cache_pct, free_tb_cache = read_cache_usage()
+            cache_pct, free_tb_cache, cache_total_tb = read_cache_usage()
             last_cache_refresh = now
         if now - last_recent_refresh > RECENT_REFRESH_SECONDS:
             recent_items = get_recently_added(RECENT_COUNT, RECENT_MAX_AGE_DAYS)
@@ -888,16 +1065,15 @@ def main():
 
         if net1_iface != prev_net1_iface:
             prev_net1_rx = prev_net1_tx = None
+            net1_base_rx = net1_base_tx = None
             prev_net1_iface = net1_iface
         if net2_iface != prev_net2_iface:
             prev_net2_rx = prev_net2_tx = None
+            net2_base_rx = net2_base_tx = None
             prev_net2_iface = net2_iface
 
         net_info = {"net1": None, "net2": None}
-        for slot, iface, prev_rx_attr, prev_tx_attr in (
-            ("net1", net1_iface, "prev_net1_rx", "prev_net1_tx"),
-            ("net2", net2_iface, "prev_net2_rx", "prev_net2_tx"),
-        ):
+        for slot, iface in (("net1", net1_iface), ("net2", net2_iface)):
             if not iface:
                 continue
             rx, tx = read_iface_rx_tx(iface)
@@ -907,13 +1083,32 @@ def main():
             prev_tx = prev_net1_tx if slot == "net1" else prev_net2_tx
             rx_str = format_rate(rx - prev_rx, dt) if prev_rx is not None and dt > 0 else "0Kbps"
             tx_str = format_rate(tx - prev_tx, dt) if prev_tx is not None and dt > 0 else "0Kbps"
+
+            # Накопленный трафик с момента старта контейнера (или смены
+            # интерфейса) - base_rx/base_tx фиксируются один раз на первом
+            # успешном чтении, дальше total = текущее - база.
+            base_rx = net1_base_rx if slot == "net1" else net2_base_rx
+            base_tx = net1_base_tx if slot == "net1" else net2_base_tx
+            if base_rx is None:
+                base_rx, base_tx = rx, tx
+            total_rx_str = format_bytes_total(rx - base_rx)
+            total_tx_str = format_bytes_total(tx - base_tx)
+
+            iface_ip = read_iface_ip(iface)
+            conn_count = count_established_connections(iface_ip)
+
             if slot == "net1":
                 prev_net1_rx, prev_net1_tx = rx, tx
+                net1_base_rx, net1_base_tx = base_rx, base_tx
             else:
                 prev_net2_rx, prev_net2_tx = rx, tx
+                net2_base_rx, net2_base_tx = base_rx, base_tx
+
             net_info[slot] = {
-                "name": iface, "speed": read_iface_speed(iface), "ip": read_iface_ip(iface),
+                "name": iface, "speed": read_iface_speed(iface), "ip": iface_ip,
                 "rx": rx_str, "tx": tx_str,
+                "total_rx": total_rx_str, "total_tx": total_tx_str,
+                "conn_count": conn_count if conn_count is not None else 0,
             }
 
         prev_time = now
@@ -924,6 +1119,24 @@ def main():
             "cpu_temp_c": cpu_temp_c, "disk_pct": round(disk_pct),
             "array_pct": arr_pct, "cache_pct": cache_pct,
             "free_tb": round(free_tb_array + free_tb_cache, 2),
+
+            "array_used_tb": round(total_tb - free_tb_array, 2),
+            "array_total_tb": total_tb,
+            "cache_free_tb": free_tb_cache,
+            "cache_total_tb": cache_total_tb,
+
+            "ram_used_gb": ram_used_gb,
+            "ram_total_gb": ram_total_gb,
+            "swap_pct": round(swap_pct),
+
+            "load1": round(load1, 2), "load5": round(load5, 2), "load15": round(load15, 2),
+            "cpu_freq_mhz": cpu_freq_mhz,
+            "cpu_pct_core_max": round(cpu_pct_core_max),
+
+            "uptime": format_duration(read_uptime_seconds()),
+            "container_uptime": format_duration(now - CONTAINER_START_TIME),
+            "time_now": datetime.datetime.now().strftime("%H:%M"),
+
             "net": net_info,
             "plex": {"movies": movies, "series": series, "songs": songs},
             "streams": sessions,
@@ -944,6 +1157,7 @@ def main():
         common_metrics = {
             "cpu": cpu_pct, "ram": ram_pct, "net": net_pct, "disk": disk_pct,
             "array": arr_pct, "cache": cache_pct, "cputemp": cputemp_pct,
+            "swap": swap_pct,
         }
         with state_lock:
             colors = state["cfg"]["colors"]
