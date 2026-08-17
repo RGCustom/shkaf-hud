@@ -85,12 +85,15 @@ SCREENS_PAGE_HTML = """<!doctype html>
   .btn.danger { background:#3a1f1c; color:#ffb3ab; border:1px solid var(--danger); }
 
   .legend { margin-top:16px; }
-  .legend-group { margin-bottom:10px; }
-  .legend-group .gtitle { font-size:11px; color:var(--muted); text-transform:uppercase; margin-bottom:4px; }
+  .legend-group { margin-bottom:14px; }
+  .legend-group .gtitle { font-size:11px; color:var(--muted); text-transform:uppercase; margin-bottom:6px;
+                           letter-spacing:.02em; }
   .legend-item { display:inline-block; background:#101112; border:1px solid var(--border); border-radius:5px;
                  padding:3px 7px; margin:2px 3px 2px 0; font-size:11px; font-family:monospace; cursor:pointer;
                  color:var(--text); }
   .legend-item:hover { border-color:var(--accent); color:var(--accent); }
+  .legend-item.repeating { border-color:#3a3220; }
+  .legend-item.repeating::after { content:'\21bb'; margin-left:5px; color:var(--accent); font-family:sans-serif; }
 
   footer { text-align:center; color:var(--border); font-size:11px; margin-top:20px; }
 </style></head>
@@ -234,23 +237,31 @@ function saveOrder() {
 
 function buildLegend() {
   fetch('/api/variables').then(r => r.json()).then(vars => {
-    const groups = {};
-    vars.forEach(v => { (groups[v.group] = groups[v.group] || []).push(v); });
-    const labels = { scalar: 'Общие', stream: 'Стримы (Plex)', recent: 'Недавно добавленное', qbt: 'qBittorrent' };
+    // Группировка по category (чисто для отображения - на разворачивание
+    // экранов в N копий влияет только v.group, его тут не используем).
+    const categories = {};
+    vars.forEach(v => { (categories[v.category] = categories[v.category] || []).push(v); });
+
+    // Порядок категорий - как в variables.CATEGORY_ORDER; всё, чего там
+    // почему-то нет (на всякий случай), уходит в конец списком.
+    const order = ['Система', 'Диски / массив', 'Сеть', 'Media', 'qBittorrent'];
+    const orderedCats = [...order.filter(c => categories[c]), ...Object.keys(categories).filter(c => !order.includes(c))];
+
     const legend = document.getElementById('legend');
     legend.innerHTML = '';
-    Object.entries(groups).forEach(([g, items]) => {
+    orderedCats.forEach(cat => {
+      const items = categories[cat];
       const div = document.createElement('div');
       div.className = 'legend-group';
       const title = document.createElement('div');
       title.className = 'gtitle';
-      title.textContent = labels[g] || g;
+      title.textContent = cat;
       div.appendChild(title);
       items.forEach(v => {
         const span = document.createElement('span');
-        span.className = 'legend-item';
+        span.className = 'legend-item' + (v.repeating ? ' repeating' : '');
         span.textContent = '{' + v.name + '}';
-        span.title = v.label;
+        span.title = v.label + (v.repeating ? ' (повторяющаяся - разворачивает экран по числу элементов)' : '');
         span.addEventListener('click', () => {
           const field = focusedField || document.getElementById('edit-l1');
           const pos = field.selectionStart || field.value.length;
