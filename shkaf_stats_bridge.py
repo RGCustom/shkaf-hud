@@ -102,6 +102,8 @@ BAR_METRICS = {
     "cache": "Cache %",
     "cputemp": "CPU temp",
     "swap": "SWAP %",
+    "qbt_dl": "qBittorrent ↓ (DL)",
+    "qbt_ul": "qBittorrent ↑ (UL)",
 }
 
 DEFAULT_SETTINGS = {
@@ -507,7 +509,21 @@ def tautulli_get(cmd, **params):
     return r.json()["response"]["data"]
 
 
+def format_bandwidth(kbps):
+    """Tautulli отдаёт bandwidth сессии в Kbps."""
+    kbps = kbps or 0
+    if kbps <= 0:
+        return "0 Kbps"
+    mbps = kbps / 1000
+    if mbps >= 1:
+        return f"{mbps:.1f} Mbps"
+    return f"{kbps:.0f} Kbps"
+
+
 def get_activity():
+    """Возвращает (sessions, ok). ok=False означает, что Tautulli сейчас
+    недоступен (см. plex_server_status) - в отличие от ok=True с пустым
+    sessions, что означает 'сервер жив, просто никто не смотрит'."""
     try:
         data = tautulli_get("get_activity")
         sessions = data.get("sessions", [])
@@ -521,11 +537,12 @@ def get_activity():
                 "user": user,
                 "progress": int(s.get("progress_percent", 0) or 0),
                 "mode": mode,
+                "bandwidth": format_bandwidth(float(s.get("bandwidth") or 0)),
             })
-        return out
+        return out, True
     except Exception as e:
         print(f"[tautulli] get_activity failed: {e}", flush=True)
-        return []
+        return [], False
 
 
 def get_library_counts():
@@ -1056,7 +1073,13 @@ def main():
             recent_items = get_recently_added(RECENT_COUNT, RECENT_MAX_AGE_DAYS)
             last_recent_refresh = now
 
-        sessions = get_activity()
+        sessions, plex_online = get_activity()
+        plex_server_status = "online" if plex_online else "offline"
+        plex_transcode_count = sum(1 for s in sessions if s["mode"] == "T")
+        plex_users_count = len({s["user"] for s in sessions if s["user"]})
+
+        # qBittorrent: суммарная статистика по ВСЕМ торрентам (в т.ч. для LED-баров)
+        qbt_totals = qbittorrent.get_qbt_totals()
 
         # сеть по интерфейсам (net1/net2, для OLED-экранов)
         with state_lock:
@@ -1137,6 +1160,16 @@ def main():
             "container_uptime": format_duration(now - CONTAINER_START_TIME),
             "time_now": datetime.datetime.now().strftime("%H:%M"),
 
+            "plex_server_status": plex_server_status,
+            "plex_transcode_count": plex_transcode_count,
+            "plex_users_count": plex_users_count,
+
+            "qbt_total_dl": qbt_totals["total_dl"],
+            "qbt_total_ul": qbt_totals["total_ul"],
+            "qbt_count_all": qbt_totals["count_all"],
+            "qbt_ratio": qbt_totals["ratio"],
+            "qbt_free_space_gb": qbt_totals["free_space"],
+
             "net": net_info,
             "plex": {"movies": movies, "series": series, "songs": songs},
             "streams": sessions,
@@ -1158,6 +1191,7 @@ def main():
             "cpu": cpu_pct, "ram": ram_pct, "net": net_pct, "disk": disk_pct,
             "array": arr_pct, "cache": cache_pct, "cputemp": cputemp_pct,
             "swap": swap_pct,
+            "qbt_dl": qbt_totals["dl_pct"], "qbt_ul": qbt_totals["ul_pct"],
         }
         with state_lock:
             colors = state["cfg"]["colors"]
