@@ -93,7 +93,7 @@ SCREENS_PAGE_HTML = """<!doctype html>
                  color:var(--text); }
   .legend-item:hover { border-color:var(--accent); color:var(--accent); }
   .legend-item.repeating { border-color:#3a3220; }
-  .legend-item.repeating::after { content:'\21bb'; margin-left:5px; color:var(--accent); font-family:sans-serif; }
+  .legend-item.repeating::after { content:'\\21bb'; margin-left:5px; color:var(--accent); font-family:sans-serif; }
 
   footer { text-align:center; color:var(--border); font-size:11px; margin-top:20px; }
 </style></head>
