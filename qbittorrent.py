@@ -23,6 +23,10 @@ import variables
 QBT_URL = os.environ.get("QBT_URL", "http://127.0.0.1:8080")
 QBT_API_KEY = os.environ.get("QBT_API_KEY", "")
 
+# Что считать 100% на LED-барах qbt_dl/qbt_ul (аналогично NET_MAX_MBPS для
+# общего сетевого бара) - подобрать под реальную ширину своего канала.
+QBT_MAX_MBPS = float(os.environ.get("QBT_MAX_MBPS", "100"))
+
 
 def qbt_get(path, **params):
     headers = {"Authorization": f"Bearer {QBT_API_KEY}"}
@@ -31,19 +35,22 @@ def qbt_get(path, **params):
     return r.json()
 
 
+def human_rate(bps):
+    """'1234' (B/s) -> '1.2 KB/s' и т.п. - общий форматтер скорости: используется
+    и для одного торрента (format_qbt_speed), и для суммарной по всем (get_qbt_totals)."""
+    for unit in ("B/s", "KB/s", "MB/s", "GB/s"):
+        if bps < 1024:
+            return f"{bps:.0f} {unit}" if unit == "B/s" else f"{bps:.1f} {unit}"
+        bps /= 1024
+    return f"{bps:.1f} TB/s"
+
+
 def format_qbt_speed(dlspeed, upspeed):
     """Скорость с указанием направления - качаем (↓) или раздаём (↑)."""
-    def human(bps):
-        for unit in ("B/s", "KB/s", "MB/s", "GB/s"):
-            if bps < 1024:
-                return f"{bps:.0f} {unit}" if unit == "B/s" else f"{bps:.1f} {unit}"
-            bps /= 1024
-        return f"{bps:.1f} TB/s"
-
     if dlspeed > 0:
-        return f"\u2193 {human(dlspeed)}"
+        return f"\u2193 {human_rate(dlspeed)}"
     if upspeed > 0:
-        return f"\u2191 {human(upspeed)}"
+        return f"\u2191 {human_rate(upspeed)}"
     return "0 B/s"
 
 
@@ -84,3 +91,77 @@ def get_qbt_active(limit=None):
             "eta": format_qbt_eta(t.get("eta"), dlspeed),
         })
     return result
+
+
+def format_free_space(bytes_val):
+    """Свободное место на диске загрузок (server_state.free_space_on_disk)."""
+    if bytes_val is None or bytes_val < 0:
+        return "?"
+    gb = bytes_val / (1024 ** 3)
+    if gb >= 1000:
+        return f"{gb / 1024:.2f} TB"
+    return f"{gb:.1f} GB"
+
+
+def qbt_speed_pct(bytes_per_sec):
+    """0-100% от QBT_MAX_MBPS - для LED-баров qbt_dl/qbt_ul (та же логика,
+    что net_pct от NET_MAX_MBPS в главном скрипте)."""
+    if QBT_MAX_MBPS <= 0:
+        return 0.0
+    mbps = bytes_per_sec * 8 / 1_000_000
+    return max(0.0, min(100.0, mbps / QBT_MAX_MBPS * 100.0))
+
+
+def get_qbt_totals():
+    """
+    Сводная статистика по ВСЕМ торрентам (в отличие от get_qbt_active(), которая
+    берёт только активные и с лимитом REPEATING_GROUP_MAX) - для переменных
+    qbt_total_dl/qbt_total_ul/qbt_count_all/qbt_ratio/qbt_free_space_gb, плюс
+    dl_pct/ul_pct (0-100%) для LED-баров.
+    Пустой QBT_API_KEY = интеграция выключена, тихо возвращаем нули.
+    """
+    empty = {
+        "total_dl": "0 B/s", "total_ul": "0 B/s",
+        "count_all": 0, "ratio": 0.0, "free_space": "?",
+        "dl_pct": 0.0, "ul_pct": 0.0,
+    }
+    if not QBT_API_KEY:
+        return empty
+
+    # sync/maindata.server_state - глобальные текущие скорости и свободное
+    # место одним запросом (дешевле, чем суммировать dlspeed/upspeed по
+    # списку торрентов вручную).
+    dlspeed = upspeed = 0
+    free_space = None
+    try:
+        maindata = qbt_get("sync/maindata")
+        server_state = maindata.get("server_state", {})
+        dlspeed = server_state.get("dl_info_speed", 0)
+        upspeed = server_state.get("up_info_speed", 0)
+        free_space = server_state.get("free_space_on_disk")
+    except Exception as e:
+        print(f"[qbt] sync/maindata failed: {e}", flush=True)
+
+    # torrents/info без фильтра - все торренты, для количества и ratio
+    # (сумма uploaded/downloaded за всё время по каждому торренту).
+    count_all = 0
+    ratio = 0.0
+    try:
+        all_torrents = qbt_get("torrents/info")
+        count_all = len(all_torrents)
+        total_downloaded = sum(t.get("downloaded", 0) for t in all_torrents)
+        total_uploaded = sum(t.get("uploaded", 0) for t in all_torrents)
+        if total_downloaded > 0:
+            ratio = round(total_uploaded / total_downloaded, 2)
+    except Exception as e:
+        print(f"[qbt] torrents/info (all) failed: {e}", flush=True)
+
+    return {
+        "total_dl": human_rate(dlspeed),
+        "total_ul": human_rate(upspeed),
+        "count_all": count_all,
+        "ratio": ratio,
+        "free_space": format_free_space(free_space),
+        "dl_pct": qbt_speed_pct(dlspeed),
+        "ul_pct": qbt_speed_pct(upspeed),
+    }
