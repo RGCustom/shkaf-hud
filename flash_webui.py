@@ -83,7 +83,7 @@ FLASH_PAGE_HTML = """<!doctype html>
 <body>
 <div class="wrap">
   <div class="brand"><span class="dot"></span><h1>shkaf-hud</h1></div>
-  <div class="nav"><a href="/">Sensors</a><a href="/screens">OLED screens</a><a href="/flash" class="active">Flash</a></div>
+  <div class="nav"><a href="/">Sensors</a><a href="/settings">Settings</a><a href="/screens">OLED screens</a><a href="/flash" class="active">Flash</a></div>
 
   <div class="card">
     <h2>ПРОШИВКА ARDUINO</h2>

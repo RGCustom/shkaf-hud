@@ -35,6 +35,7 @@ import variables
 import templates
 import screens
 import screens_webui
+import settings_webui
 import protocol
 import ledbar
 import qbittorrent
@@ -89,9 +90,33 @@ DEFAULT_COLORS = {
     "bar2": {"c1": "00FF42", "c2": "FFF600", "c3": "FF0000"},
     "bar3": {"c1": "00FF42", "c2": "FFF600", "c3": "FF0000"},
 }
+# colors_top - отдельный градиент для верхней половины в режиме "center".
+# Дефолт = DEFAULT_COLORS - так получается "зеркало" без специальной
+# mirror-логики: юзер просто не трогает colors_top, и обе половины одинаковые.
+DEFAULT_COLORS_TOP = copy.deepcopy(DEFAULT_COLORS)
+
 DEFAULT_ASSIGNMENT = {"bar0": "cpu", "bar1": "ram", "bar2": "net", "bar3": "disk"}
+# assignment_top - метрика верхней половины в режиме "center". Дефолт = та же
+# метрика, что и снизу (опять же зеркальность "из коробки").
+DEFAULT_ASSIGNMENT_TOP = dict(DEFAULT_ASSIGNMENT)
+
 DEFAULT_BRIGHTNESS = 15
 DEFAULT_SOLID = {"bar0": False, "bar1": False, "bar2": False, "bar3": False}
+DEFAULT_SOLID_TOP = {"bar0": False, "bar1": False, "bar2": False, "bar3": False}
+
+# "classic" - градиент снизу вверх (как было всегда).
+# "center"  - бар растёт от центра в обе стороны, у каждой половины своя
+#             метрика/цвета/solid (assignment_top/colors_top/solid_top).
+DEFAULT_MODE = {"bar0": "classic", "bar1": "classic", "bar2": "classic", "bar3": "classic"}
+
+# Peak hold - независимый тумблер поверх ЛЮБОГО режима (см. ledbar.PeakHold).
+# style: "hold" - точка держится и гаснет, "fade" - плавно затухает.
+DEFAULT_PEAK = {
+    "bar0": {"enabled": False, "style": "hold"},
+    "bar1": {"enabled": False, "style": "hold"},
+    "bar2": {"enabled": False, "style": "hold"},
+    "bar3": {"enabled": False, "style": "hold"},
+}
 
 BAR_METRICS = {
     "cpu": "CPU",
@@ -108,9 +133,14 @@ BAR_METRICS = {
 
 DEFAULT_SETTINGS = {
     "colors": DEFAULT_COLORS,
+    "colors_top": DEFAULT_COLORS_TOP,
     "assignment": DEFAULT_ASSIGNMENT,
+    "assignment_top": DEFAULT_ASSIGNMENT_TOP,
+    "mode": DEFAULT_MODE,
     "brightness": DEFAULT_BRIGHTNESS,
     "solid": DEFAULT_SOLID,
+    "solid_top": DEFAULT_SOLID_TOP,
+    "peak": DEFAULT_PEAK,
     "contrast": 255,
     "net1_iface": "",
     "net2_iface": "",
@@ -150,7 +180,7 @@ def save_settings(cfg):
 
 state_lock = threading.Lock()
 state = {
-    "bar0": 0, "bar1": 0, "bar2": 0, "bar3": 0,
+    "bars": {},  # {"bar0": {"mode":..., "pixels":[...], "pct_bottom":..., "pct_top":...}, ...}
     "cfg": load_settings(),
     "serial_connected": False,
     "oled_lines": ["", "", ""],
@@ -639,7 +669,7 @@ SENSORS_PAGE_HTML = """<!doctype html>
   .brand { display:flex; align-items:center; gap:10px; margin-bottom:4px; }
   .brand .dot { width:9px; height:9px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); }
   h1 { font-size:19px; font-weight:600; margin:0; }
-  .nav { display:flex; gap:16px; margin:14px 0 24px; }
+  .nav { display:flex; gap:16px; margin:14px 0 24px; flex-wrap:wrap; }
   .nav a { color:var(--muted); text-decoration:none; font-size:13px; padding:6px 0; border-bottom:2px solid transparent; }
   .nav a.active { color:var(--text); border-bottom-color:var(--accent); }
 
@@ -656,28 +686,26 @@ SENSORS_PAGE_HTML = """<!doctype html>
   .bars { display:flex; gap:16px; align-items:flex-start; margin-bottom:18px; }
   .bar-wrap { flex:1; display:flex; flex-direction:column; align-items:center; gap:6px; min-width:0; }
   .bar-track { width:100%; max-width:40px; height:130px; background:#101112; border-radius:6px;
-               display:flex; flex-direction:column-reverse; overflow:hidden; border:1px solid var(--border); }
-  .bar-fill { width:100%; transition:height .3s, background .2s; }
+               display:flex; flex-direction:column-reverse; overflow:hidden; border:1px solid var(--border);
+               padding:2px; gap:1px; }
+  .led-px { flex:1 1 auto; min-height:1px; border-radius:1px; background:#101112; transition:background .2s; }
   .label { font-size:12px; color:var(--muted); text-align:center; }
   .label b { color:var(--text); font-size:13px; }
-  input[type=color] { width:20px; height:20px; border:none; background:none; border-radius:6px; cursor:pointer; padding:0; }
-  .grad-colors { display:flex; gap:3px; }
-  select.metric, select.iface { background:#101112; color:var(--text); border:1px solid var(--border);
-                  border-radius:6px; font-size:11px; padding:3px 4px; width:100%; }
-  .grad-label { font-size:10px; color:var(--muted); display:flex; align-items:center; gap:4px; white-space:nowrap; }
-  .grad-label input { width:12px; height:12px; margin:0; }
 
   .brightness-row, .field-row { display:flex; align-items:center; gap:10px; margin-top:12px; font-size:13px; }
   .brightness-row label, .field-row label { color:var(--muted); min-width:100px; }
   .brightness-row input[type=range] { flex:1; }
   .brightness-row .val { min-width:36px; text-align:right; color:var(--text); }
 
+  select.iface { background:#101112; color:var(--text); border:1px solid var(--border);
+                  border-radius:6px; font-size:11px; padding:3px 4px; width:100%; }
+
   footer { text-align:center; color:var(--border); font-size:11px; margin-top:20px; }
 </style></head>
 <body>
 <div class="wrap">
   <div class="brand"><span class="dot"></span><h1>shkaf-hud</h1></div>
-  <div class="nav"><a href="/" class="active">Sensors</a><a href="/screens">OLED screens</a><a href="/flash">Flash</a></div>
+  <div class="nav"><a href="/" class="active">Sensors</a><a href="/settings">Settings</a><a href="/screens">OLED screens</a><a href="/flash">Flash</a></div>
 
   <div class="banner" id="banner"><span class="b-dot"></span>
     Pro Micro не подключена - лента и OLED не обновляются, статистика продолжает собираться</div>
@@ -685,26 +713,14 @@ SENSORS_PAGE_HTML = """<!doctype html>
   <div class="card">
     <h2>LED БАРЫ</h2>
     <div class="bars">
-      <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-bar0"></div></div>
-        <div class="grad-colors"><input type="color" id="c1-bar0"><input type="color" id="c2-bar0"><input type="color" id="c3-bar0"></div>
-        <select class="metric" id="metric-bar0"></select>
-        <label class="grad-label"><input type="checkbox" id="solid-bar0"> цвет на 100%</label>
-        <div class="label"><b><span id="val-bar0"></span>%</b></div></div>
-      <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-bar1"></div></div>
-        <div class="grad-colors"><input type="color" id="c1-bar1"><input type="color" id="c2-bar1"><input type="color" id="c3-bar1"></div>
-        <select class="metric" id="metric-bar1"></select>
-        <label class="grad-label"><input type="checkbox" id="solid-bar1"> цвет на 100%</label>
-        <div class="label"><b><span id="val-bar1"></span>%</b></div></div>
-      <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-bar2"></div></div>
-        <div class="grad-colors"><input type="color" id="c1-bar2"><input type="color" id="c2-bar2"><input type="color" id="c3-bar2"></div>
-        <select class="metric" id="metric-bar2"></select>
-        <label class="grad-label"><input type="checkbox" id="solid-bar2"> цвет на 100%</label>
-        <div class="label"><b><span id="val-bar2"></span>%</b></div></div>
-      <div class="bar-wrap"><div class="bar-track"><div class="bar-fill" id="fill-bar3"></div></div>
-        <div class="grad-colors"><input type="color" id="c1-bar3"><input type="color" id="c2-bar3"><input type="color" id="c3-bar3"></div>
-        <select class="metric" id="metric-bar3"></select>
-        <label class="grad-label"><input type="checkbox" id="solid-bar3"> цвет на 100%</label>
-        <div class="label"><b><span id="val-bar3"></span>%</b></div></div>
+      <div class="bar-wrap"><div class="bar-track" id="pixels-bar0"></div>
+        <div class="label"><b><span id="val-bar0"></span></b></div></div>
+      <div class="bar-wrap"><div class="bar-track" id="pixels-bar1"></div>
+        <div class="label"><b><span id="val-bar1"></span></b></div></div>
+      <div class="bar-wrap"><div class="bar-track" id="pixels-bar2"></div>
+        <div class="label"><b><span id="val-bar2"></span></b></div></div>
+      <div class="bar-wrap"><div class="bar-track" id="pixels-bar3"></div>
+        <div class="label"><b><span id="val-bar3"></span></b></div></div>
     </div>
     <div class="brightness-row">
       <label>Яркость</label>
@@ -734,24 +750,8 @@ SENSORS_PAGE_HTML = """<!doctype html>
 
 <script>
 const bars = ["bar0","bar1","bar2","bar3"];
-const stops = ["c1","c2","c3"];
-let editingColor = {}, editingSolid = {}, editingBrightness = false, editingContrast = false, editingIfaces = false;
-let metricsPopulated = false, ifacesPopulated = false;
-
-bars.forEach(k => {
-  stops.forEach(stop => {
-    const el = document.getElementById(stop + "-" + k);
-    el.addEventListener("input", () => editingColor[k] = true);
-    el.addEventListener("change", () => sendColors(k));
-  });
-  document.getElementById("metric-" + k).addEventListener("change", sendAssignment);
-  const solidEl = document.getElementById("solid-" + k);
-  solidEl.addEventListener("change", () => {
-    editingSolid[k] = true;
-    fetch("/api/solid", { method: "POST", headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ [k]: solidEl.checked }) }).then(() => editingSolid[k] = false);
-  });
-});
+let editingBrightness = false, editingContrast = false, editingIfaces = false;
+let ifacesPopulated = false, pixelsBuilt = false;
 
 const brightnessEl = document.getElementById("brightness");
 brightnessEl.addEventListener("input", () => {
@@ -772,33 +772,6 @@ contrastEl.addEventListener("change", () => {
   fetch("/api/contrast", { method: "POST", headers: {"Content-Type":"application/json"},
     body: JSON.stringify({ value: parseInt(contrastEl.value) }) }).then(() => editingContrast = false);
 });
-
-function sendColors(k) {
-  const body = {}; body[k] = {};
-  stops.forEach(stop => body[k][stop] = document.getElementById(stop + "-" + k).value.slice(1));
-  fetch("/api/colors", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) })
-    .then(() => editingColor[k] = false);
-}
-
-function sendAssignment() {
-  const body = {};
-  bars.forEach(k => body[k] = document.getElementById("metric-" + k).value);
-  fetch("/api/assignment", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
-}
-
-function populateMetrics(metrics, assignment) {
-  bars.forEach(k => {
-    const sel = document.getElementById("metric-" + k);
-    sel.innerHTML = "";
-    Object.entries(metrics).forEach(([id, label]) => {
-      const opt = document.createElement("option");
-      opt.value = id; opt.textContent = label;
-      if (id === assignment[k]) opt.selected = true;
-      sel.appendChild(opt);
-    });
-  });
-  metricsPopulated = true;
-}
 
 function populateIfaces(ifaces, net1, net2) {
   const sel1 = document.getElementById("net1-iface");
@@ -825,35 +798,37 @@ function populateIfaces(ifaces, net1, net2) {
   }));
 }
 
+// Превью строится динамически по leds_per_bar, пришедшему от бэкенда -
+// число диодов на бар нигде на фронте не захардкожено.
+function buildPixelGrid(ledsPerBar) {
+  bars.forEach(k => {
+    const track = document.getElementById("pixels-" + k);
+    track.innerHTML = "";
+    for (let i = 0; i < ledsPerBar; i++) {
+      const sq = document.createElement("div");
+      sq.className = "led-px";
+      sq.id = "px-" + k + "-" + i;
+      track.appendChild(sq);
+    }
+  });
+  pixelsBuilt = true;
+}
+
 function refresh() {
   fetch("/api/state").then(r => r.json()).then(s => {
     document.getElementById("banner").classList.toggle("show", !s.serial_connected);
-    if (!metricsPopulated) populateMetrics(s.metrics, s.cfg.assignment);
     if (!ifacesPopulated) populateIfaces(s.available_interfaces, s.cfg.net1_iface, s.cfg.net2_iface);
+    if (!pixelsBuilt) buildPixelGrid(s.leds_per_bar);
 
     bars.forEach(k => {
-      const pct = s[k];
-      const fill = document.getElementById("fill-" + k);
-      const c = s.cfg.colors[k];
-      const isSolidAt100 = s.cfg.solid[k];
-      if (!editingSolid[k]) document.getElementById("solid-" + k).checked = isSolidAt100;
-      if (!editingColor[k]) stops.forEach(stop => document.getElementById(stop + "-" + k).value = "#" + c[stop]);
-      if (isSolidAt100 && pct >= 100) {
-        // solid стоит и бар полон - сплошная заливка третьим цветом
-        fill.style.background = "#" + c.c3;
-      } else if (isSolidAt100) {
-        // solid стоит, но ещё не 100% - градиент только c1 -> c2, c3 тут не участвует
-        fill.style.background = `linear-gradient(to top, #${c.c1}, #${c.c2})`;
-        fill.style.backgroundSize = "100% 130px";
-        fill.style.backgroundPosition = "bottom";
-      } else {
-        // solid снята - как и раньше, обычный 3-стопный градиент c1 -> c2 -> c3
-        fill.style.background = `linear-gradient(to top, #${c.c1}, #${c.c2}, #${c.c3})`;
-        fill.style.backgroundSize = "100% 130px";
-        fill.style.backgroundPosition = "bottom";
-      }
-      fill.style.height = pct + "%";
-      document.getElementById("val-" + k).textContent = pct;
+      const bar = s.bars[k];
+      if (!bar) return;
+      bar.pixels.forEach((hex, i) => {
+        const px = document.getElementById("px-" + k + "-" + i);
+        if (px) px.style.background = "#" + hex;
+      });
+      const label = bar.mode === "center" ? (bar.pct_bottom + "% / " + bar.pct_top + "%") : (bar.pct_bottom + "%");
+      document.getElementById("val-" + k).textContent = label;
     });
 
     if (!editingBrightness) {
@@ -890,6 +865,7 @@ def api_state():
         out = dict(state)
         out["metrics"] = BAR_METRICS
         out["available_interfaces"] = list_real_interfaces()
+        out["leds_per_bar"] = ledbar.LEDS_PER_BAR
         return jsonify(out)
 
 
@@ -946,6 +922,67 @@ def api_solid():
     return jsonify({"ok": True})
 
 
+@app.route("/api/solid_top", methods=["POST"])
+def api_solid_top():
+    body = request.get_json(force=True)
+    with state_lock:
+        for k in ("bar0", "bar1", "bar2", "bar3"):
+            if k in body:
+                state["cfg"]["solid_top"][k] = bool(body[k])
+        save_settings(state["cfg"])
+    return jsonify({"ok": True})
+
+
+@app.route("/api/colors_top", methods=["POST"])
+def api_colors_top():
+    body = request.get_json(force=True)
+    with state_lock:
+        for k in ("bar0", "bar1", "bar2", "bar3"):
+            if k in body:
+                for stop in ("c1", "c2", "c3"):
+                    if stop in body[k]:
+                        state["cfg"]["colors_top"][k][stop] = body[k][stop].upper()
+        save_settings(state["cfg"])
+    return jsonify({"ok": True})
+
+
+@app.route("/api/assignment_top", methods=["POST"])
+def api_assignment_top():
+    body = request.get_json(force=True)
+    with state_lock:
+        for k in ("bar0", "bar1", "bar2", "bar3"):
+            if k in body and body[k] in BAR_METRICS:
+                state["cfg"]["assignment_top"][k] = body[k]
+        save_settings(state["cfg"])
+    return jsonify({"ok": True})
+
+
+@app.route("/api/mode", methods=["POST"])
+def api_mode():
+    body = request.get_json(force=True)
+    with state_lock:
+        for k in ("bar0", "bar1", "bar2", "bar3"):
+            if k in body and body[k] in ("classic", "center"):
+                state["cfg"]["mode"][k] = body[k]
+        save_settings(state["cfg"])
+    return jsonify({"ok": True})
+
+
+@app.route("/api/peak", methods=["POST"])
+def api_peak():
+    body = request.get_json(force=True)
+    with state_lock:
+        for k in ("bar0", "bar1", "bar2", "bar3"):
+            if k in body:
+                entry = body[k]
+                if "enabled" in entry:
+                    state["cfg"]["peak"][k]["enabled"] = bool(entry["enabled"])
+                if "style" in entry and entry["style"] in ("hold", "fade"):
+                    state["cfg"]["peak"][k]["style"] = entry["style"]
+        save_settings(state["cfg"])
+    return jsonify({"ok": True})
+
+
 @app.route("/api/net-ifaces", methods=["POST"])
 def api_net_ifaces():
     body = request.get_json(force=True)
@@ -959,6 +996,7 @@ def api_net_ifaces():
 
 
 screens_webui.register_screens_routes(app, get_context)
+settings_webui.register_settings_routes(app)
 flash_webui.register_flash_routes(app, SERIAL_PORT, flashing_event)
 
 
@@ -1005,6 +1043,15 @@ def main():
 
     rotation = screens.RotationState()
     proto = protocol.ProtocolState(full_resync_seconds=FULL_RESYNC_SECONDS)
+
+    # Peak hold - по трекеру на "низ" и "верх" каждого бара (для classic
+    # используется только *_bottom, *_top просто простаивает). Стейт живёт
+    # тут, в главном цикле, а не в state["cfg"] - это не настройка, а текущее
+    # физическое положение точки во времени.
+    peak_trackers = {}
+    for b in ("bar0", "bar1", "bar2", "bar3"):
+        peak_trackers[f"{b}_bottom"] = ledbar.PeakHold()
+        peak_trackers[f"{b}_top"] = ledbar.PeakHold()
 
     prev_time = time.time()
 
@@ -1186,7 +1233,7 @@ def main():
         with state_lock:
             state["oled_lines"] = lines
 
-        # ---- LED бары: посчитать значение метрики для каждого бара ----
+        # ---- LED бары: посчитать значение метрики(к) для каждого бара ----
         common_metrics = {
             "cpu": cpu_pct, "ram": ram_pct, "net": net_pct, "disk": disk_pct,
             "array": arr_pct, "cache": cache_pct, "cputemp": cputemp_pct,
@@ -1195,28 +1242,64 @@ def main():
         }
         with state_lock:
             colors = state["cfg"]["colors"]
+            colors_top = state["cfg"]["colors_top"]
             assignment = state["cfg"]["assignment"]
-            brightness = state["cfg"]["brightness"]
+            assignment_top = state["cfg"]["assignment_top"]
+            mode_cfg = state["cfg"]["mode"]
             solid = state["cfg"]["solid"]
+            solid_top = state["cfg"]["solid_top"]
+            peak_cfg = state["cfg"]["peak"]
+            brightness = state["cfg"]["brightness"]
             contrast = state["cfg"]["contrast"]
 
-        bar_pcts = {}
-        for b in ("bar0", "bar1", "bar2", "bar3"):
-            bar_pcts[b] = round(common_metrics.get(assignment[b], 0))
+        leds_per_bar = ledbar.LEDS_PER_BAR
 
-        with state_lock:
-            state["bar0"], state["bar1"] = bar_pcts["bar0"], bar_pcts["bar1"]
-            state["bar2"], state["bar3"] = bar_pcts["bar2"], bar_pcts["bar3"]
-
-        # ---- собрать протокол (только изменившееся) ----
-        # Градиент/solid-логика считается тут, на сервере (ledbar.py) - Arduino
-        # получает уже готовый цвет каждого светодиода и просто зажигает его.
+        # ---- собрать пиксели + протокол (только изменившееся) ----
+        # Градиент/solid/center/peak-логика считается тут, на сервере
+        # (ledbar.py) - Arduino получает уже готовый цвет каждого диода и
+        # просто зажигает его, ему всё равно, classic это или center.
+        bars_state = {}
         proto_values = {}
         for i, b in enumerate(("bar0", "bar1", "bar2", "bar3"), start=1):
-            pixels = ledbar.compute_bar_pixels(
-                bar_pcts[b], colors[b]["c1"], colors[b]["c2"], colors[b]["c3"], solid[b]
-            )
+            bar_mode = mode_cfg.get(b, "classic")
+            peak_info = peak_cfg.get(b, {"enabled": False, "style": "hold"})
+            peak_enabled = peak_info.get("enabled", False)
+
+            bottom_tracker = peak_trackers[f"{b}_bottom"]
+            bottom_tracker.set_style(peak_info.get("style", "hold"))
+
+            pct_bottom = round(common_metrics.get(assignment[b], 0))
+            bottom_peak = bottom_tracker.update(pct_bottom, now)
+
+            if bar_mode == "center":
+                top_tracker = peak_trackers[f"{b}_top"]
+                top_tracker.set_style(peak_info.get("style", "hold"))
+
+                pct_top = round(common_metrics.get(assignment_top[b], 0))
+                top_peak = top_tracker.update(pct_top, now)
+
+                pixels = ledbar.compute_bar_pixels_center(
+                    pct_bottom, pct_top,
+                    colors[b]["c1"], colors[b]["c2"], colors[b]["c3"], solid[b],
+                    colors_top[b]["c1"], colors_top[b]["c2"], colors_top[b]["c3"], solid_top[b],
+                    leds_per_bar=leds_per_bar,
+                    peak_pct_bottom=bottom_peak if peak_enabled else None,
+                    peak_pct_top=top_peak if peak_enabled else None,
+                )
+                bars_state[b] = {"mode": "center", "pixels": pixels, "pct_bottom": pct_bottom, "pct_top": pct_top}
+            else:
+                pixels = ledbar.compute_bar_pixels(
+                    pct_bottom, colors[b]["c1"], colors[b]["c2"], colors[b]["c3"], solid[b],
+                    leds_per_bar=leds_per_bar,
+                    peak_pct=bottom_peak if peak_enabled else None,
+                )
+                bars_state[b] = {"mode": "classic", "pixels": pixels, "pct_bottom": pct_bottom, "pct_top": None}
+
             proto_values[f"BAR{i}"] = protocol.pack_bar_pixels(pixels)
+
+        with state_lock:
+            state["bars"] = bars_state
+
         proto_values["BRI"] = str(brightness)
         proto_values["CON"] = str(contrast)
         proto_values["L1"], proto_values["L2"], proto_values["L3"] = lines

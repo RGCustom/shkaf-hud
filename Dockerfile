@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends avrdude \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY shkaf_stats_bridge.py variables.py templates.py screens.py screens_webui.py protocol.py ledbar.py qbittorrent.py flash.py flash_webui.py .
+COPY shkaf_stats_bridge.py variables.py templates.py screens.py screens_webui.py settings_webui.py protocol.py ledbar.py qbittorrent.py flash.py flash_webui.py .
 
 EXPOSE 8189
 
