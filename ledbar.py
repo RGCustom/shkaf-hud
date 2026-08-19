@@ -30,7 +30,13 @@ ledbar.py
     peak_pct_top). Само отслеживание максимума во времени (когда он был,
     когда гаснуть/затухать) живёт в классе PeakHold - вызывающий код (главный
     цикл) раз в тик скармливает туда текущий pct и получает готовое число
-    0-100 для точки (или None, если точку сейчас рисовать не нужно).
+    0-100 для точки (или None, если точку сейчас рисовать не нужно). Тайминги
+    (сколько держится/затухает) - ОДНИ глобальные на весь проект (не на
+    каждый бар отдельно) через PeakHold.set_timings() - хранятся в
+    settings.json (см. shkaf_stats_bridge.py: cfg["peak_hold_seconds"]/
+    cfg["peak_fade_seconds"], слайдеры 0-10 сек в /settings). Константы
+    PEAK_HOLD_SECONDS/PEAK_FADE_SECONDS ниже - только дефолт для старых
+    конфигов без этих полей.
 
 Логика градиента внутри одной "полосы" диодов (solid-чекбокс "цвет на 100%"
 работает так же, как раньше):
@@ -46,9 +52,9 @@ ledbar.py
 
 LEDS_PER_BAR = 12  # должно совпадать с #define LEDS_PER_BAR в .ino
 
-# Тайминги peak hold - одни на все бары/половины (не выносим в настройки
-# на каждый бар, чтобы не плодить слайдеры; при необходимости можно вынести
-# в env позже).
+# Дефолтные тайминги peak hold - используются, если у бара в settings.json
+# ещё нет hold_seconds/fade_seconds (старый конфиг) или значение не задано.
+# Реальные тайминги в работе - per-bar, см. PeakHold.set_timings().
 PEAK_HOLD_SECONDS = 2.0   # style="hold": сколько точка стоит неподвижно, прежде чем погаснуть
 PEAK_FADE_SECONDS = 1.5   # style="fade": за сколько точка плавно съезжает вниз к текущему pct
 
@@ -180,17 +186,35 @@ class PeakHold:
     Стейт живёт в инстансе, вызывающий код (главный цикл) хранит по одному
     инстансу на канал и раз в тик зовёт update(pct, now).
 
-    style="hold" - точка держится PEAK_HOLD_SECONDS неподвижно, потом гаснет разом.
-    style="fade" - точка плавно линейно едет вниз к текущему pct за PEAK_FADE_SECONDS.
+    style="hold" - точка держится hold_seconds неподвижно, потом гаснет разом.
+    style="fade" - точка плавно линейно едет вниз к текущему pct за fade_seconds.
+
+    hold_seconds/fade_seconds - per-instance параметры конструктора (не жёстко
+    захардкожены), но в проекте используются как ОДНИ глобальные значения для
+    всех трекеров сразу (см. cfg["peak_hold_seconds"]/cfg["peak_fade_seconds"]
+    в shkaf_stats_bridge.py, слайдеры 0-10 сек с шагом 0.1 на /settings) -
+    просто применяются к каждому инстансу через set_timings(). 0 в обоих
+    случаях означает "мгновенно" - точка не показывается вообще.
     """
 
-    def __init__(self, style="hold"):
+    def __init__(self, style="hold", hold_seconds=PEAK_HOLD_SECONDS, fade_seconds=PEAK_FADE_SECONDS):
         self.set_style(style)
+        self.hold_seconds = hold_seconds
+        self.fade_seconds = fade_seconds
         self.peak_pct = 0.0
         self.peak_time = 0.0
 
     def set_style(self, style):
         self.style = style if style in ("hold", "fade") else "hold"
+
+    def set_timings(self, hold_seconds=None, fade_seconds=None):
+        """Обновить тайминги (обычно раз в тик - настройки могли поменяться
+        через /api/peak_timing). None - оставить как было, иначе клампится
+        в 0-10 (тот же диапазон, что у слайдеров в /settings)."""
+        if hold_seconds is not None:
+            self.hold_seconds = max(0.0, min(10.0, hold_seconds))
+        if fade_seconds is not None:
+            self.fade_seconds = max(0.0, min(10.0, fade_seconds))
 
     def update(self, pct, now):
         """Возвращает peak_pct (0-100) для отрисовки точки, либо None, если
@@ -208,15 +232,15 @@ class PeakHold:
         elapsed = now - self.peak_time
 
         if self.style == "hold":
-            if elapsed >= PEAK_HOLD_SECONDS:
+            if elapsed >= self.hold_seconds:
                 self.peak_pct = pct  # погасло - "упало" на текущий уровень, ждём новый пик
                 return None
             return self.peak_pct
 
         # style == "fade"
-        if elapsed >= PEAK_FADE_SECONDS:
+        if self.fade_seconds <= 0 or elapsed >= self.fade_seconds:
             self.peak_pct = pct
             return None
-        frac = elapsed / PEAK_FADE_SECONDS
+        frac = elapsed / self.fade_seconds
         current = self.peak_pct - (self.peak_pct - pct) * frac
         return current if current > pct else None

@@ -111,12 +111,20 @@ DEFAULT_MODE = {"bar0": "classic", "bar1": "classic", "bar2": "classic", "bar3":
 
 # Peak hold - независимый тумблер поверх ЛЮБОГО режима (см. ledbar.PeakHold).
 # style: "hold" - точка держится и гаснет, "fade" - плавно затухает.
+# Тайминги (сколько держится/затухает) - ОБЩИЕ на все бары, см.
+# DEFAULT_PEAK_HOLD_SECONDS/DEFAULT_PEAK_FADE_SECONDS ниже - один слайдер
+# в /settings на оба параметра, не по одному на бар.
 DEFAULT_PEAK = {
     "bar0": {"enabled": False, "style": "hold"},
     "bar1": {"enabled": False, "style": "hold"},
     "bar2": {"enabled": False, "style": "hold"},
     "bar3": {"enabled": False, "style": "hold"},
 }
+
+# Общие тайминги peak hold - одни на весь проект (все бары/половины),
+# слайдеры 0-10 сек с шагом 0.1 в /settings. Дефолты как раньше.
+DEFAULT_PEAK_HOLD_SECONDS = 2.0
+DEFAULT_PEAK_FADE_SECONDS = 1.5
 
 BAR_METRICS = {
     "cpu": "CPU",
@@ -141,6 +149,8 @@ DEFAULT_SETTINGS = {
     "solid": DEFAULT_SOLID,
     "solid_top": DEFAULT_SOLID_TOP,
     "peak": DEFAULT_PEAK,
+    "peak_hold_seconds": DEFAULT_PEAK_HOLD_SECONDS,
+    "peak_fade_seconds": DEFAULT_PEAK_FADE_SECONDS,
     "contrast": 255,
     "net1_iface": "",
     "net2_iface": "",
@@ -983,6 +993,21 @@ def api_peak():
     return jsonify({"ok": True})
 
 
+@app.route("/api/peak_timing", methods=["POST"])
+def api_peak_timing():
+    """Общие тайминги peak hold (один слайдер на hold, один на fade - не
+    по одному на бар). Диапазон 0-10 сек, шаг 0.1 - клампим и округляем
+    тут же, чтобы в settings.json не залетело мусора при кривом запросе."""
+    body = request.get_json(force=True)
+    with state_lock:
+        if "hold_seconds" in body:
+            state["cfg"]["peak_hold_seconds"] = round(max(0.0, min(10.0, float(body["hold_seconds"]))), 1)
+        if "fade_seconds" in body:
+            state["cfg"]["peak_fade_seconds"] = round(max(0.0, min(10.0, float(body["fade_seconds"]))), 1)
+        save_settings(state["cfg"])
+    return jsonify({"ok": True})
+
+
 @app.route("/api/net-ifaces", methods=["POST"])
 def api_net_ifaces():
     body = request.get_json(force=True)
@@ -1249,6 +1274,8 @@ def main():
             solid = state["cfg"]["solid"]
             solid_top = state["cfg"]["solid_top"]
             peak_cfg = state["cfg"]["peak"]
+            peak_hold_seconds = state["cfg"]["peak_hold_seconds"]
+            peak_fade_seconds = state["cfg"]["peak_fade_seconds"]
             brightness = state["cfg"]["brightness"]
             contrast = state["cfg"]["contrast"]
 
@@ -1267,6 +1294,7 @@ def main():
 
             bottom_tracker = peak_trackers[f"{b}_bottom"]
             bottom_tracker.set_style(peak_info.get("style", "hold"))
+            bottom_tracker.set_timings(peak_hold_seconds, peak_fade_seconds)
 
             pct_bottom = round(common_metrics.get(assignment[b], 0))
             bottom_peak = bottom_tracker.update(pct_bottom, now)
@@ -1274,6 +1302,7 @@ def main():
             if bar_mode == "center":
                 top_tracker = peak_trackers[f"{b}_top"]
                 top_tracker.set_style(peak_info.get("style", "hold"))
+                top_tracker.set_timings(peak_hold_seconds, peak_fade_seconds)
 
                 pct_top = round(common_metrics.get(assignment_top[b], 0))
                 top_peak = top_tracker.update(pct_top, now)

@@ -55,12 +55,38 @@ SETTINGS_PAGE_HTML = """<!doctype html>
 
   .peak-row { border-top:1px solid var(--border); margin-top:12px; padding-top:12px; }
 
+  .global-card { background:var(--panel); border:1px solid var(--border); border-radius:14px;
+                 padding:18px; margin-bottom:20px; }
+  .global-card h2 { font-size:11px; color:var(--muted); margin:0 0 4px; font-weight:600;
+                     text-transform:uppercase; letter-spacing:.03em; }
+  .global-card .hint { font-size:11px; color:var(--muted); margin-bottom:14px; line-height:1.5; }
+  .slider-row { display:flex; align-items:center; gap:10px; margin-top:10px; font-size:13px; }
+  .slider-row label { color:var(--muted); min-width:150px; }
+  .slider-row input[type=range] { flex:1; }
+  .slider-row .val { min-width:52px; text-align:right; color:var(--text); font-variant-numeric:tabular-nums; }
+
   footer { text-align:center; color:var(--border); font-size:11px; margin-top:20px; }
 </style></head>
 <body>
 <div class="wrap">
   <div class="brand"><span class="dot"></span><h1>shkaf-hud</h1></div>
   <div class="nav"><a href="/">Sensors</a><a href="/settings" class="active">Settings</a><a href="/screens">OLED screens</a><a href="/flash">Flash</a></div>
+
+  <div class="global-card">
+    <h2>Peak hold — общие тайминги</h2>
+    <div class="hint">Один на весь проект, а не по одному на бар — применяется ко всем барам,
+      у которых Peak hold включён (см. карточки баров ниже, стиль "hold"/"fade" на каждый выбирается там же).</div>
+    <div class="slider-row">
+      <label>Держится (hold), сек</label>
+      <input type="range" id="peak-hold-seconds" min="0" max="10" step="0.1" value="2.0">
+      <span class="val" id="peak-hold-seconds-val">2.0с</span>
+    </div>
+    <div class="slider-row">
+      <label>Затухает (fade), сек</label>
+      <input type="range" id="peak-fade-seconds" min="0" max="10" step="0.1" value="1.5">
+      <span class="val" id="peak-fade-seconds-val">1.5с</span>
+    </div>
+  </div>
 
   <div id="bars-container"></div>
 
@@ -70,6 +96,31 @@ SETTINGS_PAGE_HTML = """<!doctype html>
 <script>
 const BARS = ["bar0", "bar1", "bar2", "bar3"];
 let metricsMap = {};
+let editingPeakHold = false, editingPeakFade = false;
+
+const peakHoldEl = document.getElementById("peak-hold-seconds");
+const peakHoldValEl = document.getElementById("peak-hold-seconds-val");
+peakHoldEl.addEventListener("input", () => {
+  editingPeakHold = true;
+  peakHoldValEl.textContent = parseFloat(peakHoldEl.value).toFixed(1) + "с";
+});
+peakHoldEl.addEventListener("change", () => {
+  fetch("/api/peak_timing", { method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ hold_seconds: parseFloat(peakHoldEl.value) }) })
+    .then(() => editingPeakHold = false);
+});
+
+const peakFadeEl = document.getElementById("peak-fade-seconds");
+const peakFadeValEl = document.getElementById("peak-fade-seconds-val");
+peakFadeEl.addEventListener("input", () => {
+  editingPeakFade = true;
+  peakFadeValEl.textContent = parseFloat(peakFadeEl.value).toFixed(1) + "с";
+});
+peakFadeEl.addEventListener("change", () => {
+  fetch("/api/peak_timing", { method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ fade_seconds: parseFloat(peakFadeEl.value) }) })
+    .then(() => editingPeakFade = false);
+});
 
 function colorRow(barId, prefix, colors, onChange) {
   // prefix: "" для низа/classic, "top" для верхней половины center-режима
@@ -241,6 +292,16 @@ function renderBar(barId, index, cfg) {
 
 function render(state) {
   metricsMap = state.metrics;
+
+  if (!editingPeakHold) {
+    peakHoldEl.value = state.cfg.peak_hold_seconds;
+    peakHoldValEl.textContent = parseFloat(state.cfg.peak_hold_seconds).toFixed(1) + "с";
+  }
+  if (!editingPeakFade) {
+    peakFadeEl.value = state.cfg.peak_fade_seconds;
+    peakFadeValEl.textContent = parseFloat(state.cfg.peak_fade_seconds).toFixed(1) + "с";
+  }
+
   const container = document.getElementById("bars-container");
   container.innerHTML = "";
   BARS.forEach((barId, i) => container.appendChild(renderBar(barId, i, state.cfg)));
