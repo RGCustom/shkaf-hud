@@ -210,18 +210,9 @@ function renderBar(barId, index, cfg) {
   modeRow.appendChild(modeSel);
   card.appendChild(modeRow);
 
-  // --- низ / classic-блок (всегда виден) ---
-  const bottomBlock = document.createElement("div");
-  const bottomTitle = document.createElement("div");
-  bottomTitle.className = "half-title";
-  bottomTitle.id = "bottom-title-" + barId;
-  bottomBlock.appendChild(bottomTitle);
-  bottomBlock.appendChild(metricSelect(barId, "Метрика", cfg.assignment[barId], "/api/assignment"));
-  bottomBlock.appendChild(colorRow(barId, "", cfg.colors[barId], "/api/colors"));
-  bottomBlock.appendChild(solidCheckbox(barId, "Цвет на 100%", cfg.solid[barId], "/api/solid"));
-  card.appendChild(bottomBlock);
-
-  // --- верх / center-блок (виден только в режиме center) ---
+  // --- верх / center-блок (виден только в режиме center) - идёт ПЕРВЫМ,
+  // чтобы визуально совпадать с физическим расположением на ленте (верх
+  // сверху, низ снизу) ---
   const topBlock = document.createElement("div");
   topBlock.className = "half";
   topBlock.id = "top-block-" + barId;
@@ -233,6 +224,17 @@ function renderBar(barId, index, cfg) {
   topBlock.appendChild(colorRow(barId, "top", cfg.colors_top[barId], "/api/colors_top"));
   topBlock.appendChild(solidCheckbox(barId, "Цвет на 100%", cfg.solid_top[barId], "/api/solid_top"));
   card.appendChild(topBlock);
+
+  // --- низ / classic-блок (всегда виден) ---
+  const bottomBlock = document.createElement("div");
+  const bottomTitle = document.createElement("div");
+  bottomTitle.className = "half-title";
+  bottomTitle.id = "bottom-title-" + barId;
+  bottomBlock.appendChild(bottomTitle);
+  bottomBlock.appendChild(metricSelect(barId, "Метрика", cfg.assignment[barId], "/api/assignment"));
+  bottomBlock.appendChild(colorRow(barId, "", cfg.colors[barId], "/api/colors"));
+  bottomBlock.appendChild(solidCheckbox(barId, "Цвет на 100%", cfg.solid[barId], "/api/solid"));
+  card.appendChild(bottomBlock);
 
   function applyModeVisibility(mode) {
     bottomTitle.textContent = mode === "center" ? "Нижняя половина" : "";
