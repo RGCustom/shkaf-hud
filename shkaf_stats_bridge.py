@@ -41,7 +41,7 @@ import ledbar
 import qbittorrent
 import flash_webui
 
-SCRIPT_VERSION = "2026-08-17-1"
+SCRIPT_VERSION = "2026-08-22-1"
 
 # Момент старта процесса - для переменной container_uptime (аптайм самого
 # контейнера, в отличие от uptime - аптайма хоста из /proc/uptime).
@@ -90,23 +90,32 @@ DEFAULT_COLORS = {
     "bar2": {"c1": "00FF42", "c2": "FFF600", "c3": "FF0000"},
     "bar3": {"c1": "00FF42", "c2": "FFF600", "c3": "FF0000"},
 }
-# colors_top - отдельный градиент для верхней половины в режиме "center".
-# Дефолт = DEFAULT_COLORS - так получается "зеркало" без специальной
+# colors_top - отдельный градиент для верхней половины в режимах "center"/
+# "edges". Дефолт = DEFAULT_COLORS - так получается "зеркало" без специальной
 # mirror-логики: юзер просто не трогает colors_top, и обе половины одинаковые.
 DEFAULT_COLORS_TOP = copy.deepcopy(DEFAULT_COLORS)
 
 DEFAULT_ASSIGNMENT = {"bar0": "cpu", "bar1": "ram", "bar2": "net", "bar3": "disk"}
-# assignment_top - метрика верхней половины в режиме "center". Дефолт = та же
-# метрика, что и снизу (опять же зеркальность "из коробки").
+# assignment_top - метрика верхней половины в режимах "center"/"edges".
+# Дефолт = та же метрика, что и снизу (опять же зеркальность "из коробки").
 DEFAULT_ASSIGNMENT_TOP = dict(DEFAULT_ASSIGNMENT)
 
 DEFAULT_BRIGHTNESS = 15
 DEFAULT_SOLID = {"bar0": False, "bar1": False, "bar2": False, "bar3": False}
 DEFAULT_SOLID_TOP = {"bar0": False, "bar1": False, "bar2": False, "bar3": False}
 
-# "classic" - градиент снизу вверх (как было всегда).
+# "classic"          - градиент снизу вверх (как было всегда).
+# "classic_reverse"  - тот же classic, только перевёрнутый - бар растёт
+#                       сверху вниз. Использует те же assignment/colors/solid,
+#                       что и classic (никаких отдельных полей не заводим -
+#                       это просто другое физическое направление рендера
+#                       того же одиночного бара).
 # "center"  - бар растёт от центра в обе стороны, у каждой половины своя
 #             метрика/цвета/solid (assignment_top/colors_top/solid_top).
+# "edges"   - зеркало center: бар растёт от краёв к центру, каждая половина
+#             от своего края. Использует ТЕ ЖЕ поля, что и center
+#             (assignment_top/colors_top/solid_top) - разница только в
+#             направлении рендера (см. ledbar.compute_bar_pixels_edges).
 DEFAULT_MODE = {"bar0": "classic", "bar1": "classic", "bar2": "classic", "bar3": "classic"}
 
 # Peak hold - независимый тумблер поверх ЛЮБОГО режима (см. ledbar.PeakHold).
@@ -138,6 +147,11 @@ BAR_METRICS = {
     "qbt_dl": "qBittorrent ↓ (DL)",
     "qbt_ul": "qBittorrent ↑ (UL)",
 }
+
+# Все допустимые значения "режим бара" - используется и в /api/mode для
+# валидации, и как единый источник правды (не дублировать список руками
+# в нескольких местах).
+BAR_MODES = ("classic", "classic_reverse", "center", "edges")
 
 DEFAULT_SETTINGS = {
     "colors": DEFAULT_COLORS,
@@ -837,7 +851,9 @@ function refresh() {
         const px = document.getElementById("px-" + k + "-" + i);
         if (px) px.style.background = "#" + hex;
       });
-      const label = bar.mode === "center" ? (bar.pct_bottom + "% / " + bar.pct_top + "%") : (bar.pct_bottom + "%");
+      const label = (bar.mode === "center" || bar.mode === "edges")
+        ? (bar.pct_bottom + "% / " + bar.pct_top + "%")
+        : (bar.pct_bottom + "%");
       document.getElementById("val-" + k).textContent = label;
     });
 
@@ -972,7 +988,7 @@ def api_mode():
     body = request.get_json(force=True)
     with state_lock:
         for k in ("bar0", "bar1", "bar2", "bar3"):
-            if k in body and body[k] in ("classic", "center"):
+            if k in body and body[k] in BAR_MODES:
                 state["cfg"]["mode"][k] = body[k]
         save_settings(state["cfg"])
     return jsonify({"ok": True})
@@ -1069,10 +1085,10 @@ def main():
     rotation = screens.RotationState()
     proto = protocol.ProtocolState(full_resync_seconds=FULL_RESYNC_SECONDS)
 
-    # Peak hold - по трекеру на "низ" и "верх" каждого бара (для classic
-    # используется только *_bottom, *_top просто простаивает). Стейт живёт
-    # тут, в главном цикле, а не в state["cfg"] - это не настройка, а текущее
-    # физическое положение точки во времени.
+    # Peak hold - по трекеру на "низ" и "верх" каждого бара (для classic/
+    # classic_reverse используется только *_bottom, *_top просто простаивает).
+    # Стейт живёт тут, в главном цикле, а не в state["cfg"] - это не
+    # настройка, а текущее физическое положение точки во времени.
     peak_trackers = {}
     for b in ("bar0", "bar1", "bar2", "bar3"):
         peak_trackers[f"{b}_bottom"] = ledbar.PeakHold()
@@ -1282,13 +1298,15 @@ def main():
         leds_per_bar = ledbar.LEDS_PER_BAR
 
         # ---- собрать пиксели + протокол (только изменившееся) ----
-        # Градиент/solid/center/peak-логика считается тут, на сервере
-        # (ledbar.py) - Arduino получает уже готовый цвет каждого диода и
-        # просто зажигает его, ему всё равно, classic это или center.
+        # Градиент/solid/center/edges/reverse/peak-логика считается тут, на
+        # сервере (ledbar.py) - Arduino получает уже готовый цвет каждого
+        # диода и просто зажигает его, ему всё равно, какой это режим.
         bars_state = {}
         proto_values = {}
         for i, b in enumerate(("bar0", "bar1", "bar2", "bar3"), start=1):
             bar_mode = mode_cfg.get(b, "classic")
+            if bar_mode not in BAR_MODES:
+                bar_mode = "classic"
             peak_info = peak_cfg.get(b, {"enabled": False, "style": "hold"})
             peak_enabled = peak_info.get("enabled", False)
 
@@ -1299,7 +1317,7 @@ def main():
             pct_bottom = round(common_metrics.get(assignment[b], 0))
             bottom_peak = bottom_tracker.update(pct_bottom, now)
 
-            if bar_mode == "center":
+            if bar_mode in ("center", "edges"):
                 top_tracker = peak_trackers[f"{b}_top"]
                 top_tracker.set_style(peak_info.get("style", "hold"))
                 top_tracker.set_timings(peak_hold_seconds, peak_fade_seconds)
@@ -1307,7 +1325,8 @@ def main():
                 pct_top = round(common_metrics.get(assignment_top[b], 0))
                 top_peak = top_tracker.update(pct_top, now)
 
-                pixels = ledbar.compute_bar_pixels_center(
+                compute_fn = ledbar.compute_bar_pixels_center if bar_mode == "center" else ledbar.compute_bar_pixels_edges
+                pixels = compute_fn(
                     pct_bottom, pct_top,
                     colors[b]["c1"], colors[b]["c2"], colors[b]["c3"], solid[b],
                     colors_top[b]["c1"], colors_top[b]["c2"], colors_top[b]["c3"], solid_top[b],
@@ -1315,14 +1334,15 @@ def main():
                     peak_pct_bottom=bottom_peak if peak_enabled else None,
                     peak_pct_top=top_peak if peak_enabled else None,
                 )
-                bars_state[b] = {"mode": "center", "pixels": pixels, "pct_bottom": pct_bottom, "pct_top": pct_top}
+                bars_state[b] = {"mode": bar_mode, "pixels": pixels, "pct_bottom": pct_bottom, "pct_top": pct_top}
             else:
                 pixels = ledbar.compute_bar_pixels(
                     pct_bottom, colors[b]["c1"], colors[b]["c2"], colors[b]["c3"], solid[b],
                     leds_per_bar=leds_per_bar,
                     peak_pct=bottom_peak if peak_enabled else None,
+                    reverse=(bar_mode == "classic_reverse"),
                 )
-                bars_state[b] = {"mode": "classic", "pixels": pixels, "pct_bottom": pct_bottom, "pct_top": None}
+                bars_state[b] = {"mode": bar_mode, "pixels": pixels, "pct_bottom": pct_bottom, "pct_top": None}
 
             proto_values[f"BAR{i}"] = protocol.pack_bar_pixels(pixels)
 

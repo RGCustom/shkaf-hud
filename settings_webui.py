@@ -1,9 +1,10 @@
 """
 settings_webui.py
 
-Страница /settings - конструктор LED-баров: режим (classic/center), метрика(и),
-цвета, solid, peak hold - на каждый из 4 баров. Подключается к уже
-существующему Flask-приложению вызовом register_settings_routes(app).
+Страница /settings - конструктор LED-баров: режим (classic/classic_reverse/
+center/edges), метрика(и), цвета, solid, peak hold - на каждый из 4 баров.
+Подключается к уже существующему Flask-приложению вызовом
+register_settings_routes(app).
 
 Никакой своей серверной логики/состояния тут нет - вся работа идёт через уже
 существующие эндпойнты в shkaf_stats_bridge.py (/api/state для чтения,
@@ -95,6 +96,12 @@ SETTINGS_PAGE_HTML = """<!doctype html>
 
 <script>
 const BARS = ["bar0", "bar1", "bar2", "bar3"];
+// Режимы, у которых бар разбит на 2 независимые половины (верхний блок
+// в карточке виден только для них) - center растёт от центра наружу,
+// edges растёт от краёв к центру, но оба используют одни и те же поля
+// (assignment_top/colors_top/solid_top).
+const SPLIT_MODES = ["center", "edges"];
+
 let metricsMap = {};
 let editingPeakHold = false, editingPeakFade = false;
 
@@ -123,7 +130,7 @@ peakFadeEl.addEventListener("change", () => {
 });
 
 function colorRow(barId, prefix, colors, onChange) {
-  // prefix: "" для низа/classic, "top" для верхней половины center-режима
+  // prefix: "" для низа/classic, "top" для верхней половины center/edges-режима
   const wrap = document.createElement("div");
   wrap.className = "row";
   const label = document.createElement("label");
@@ -201,7 +208,12 @@ function renderBar(barId, index, cfg) {
   modeLabel.textContent = "Режим";
   modeRow.appendChild(modeLabel);
   const modeSel = document.createElement("select");
-  [["classic", "Classic (снизу вверх)"], ["center", "Center (от центра в обе стороны)"]].forEach(([val, text]) => {
+  [
+    ["classic", "Classic (снизу вверх)"],
+    ["classic_reverse", "Classic перевёрнутый (сверху вниз)"],
+    ["center", "Center (от центра в обе стороны)"],
+    ["edges", "Edges (от краёв к центру)"],
+  ].forEach(([val, text]) => {
     const opt = document.createElement("option");
     opt.value = val; opt.textContent = text;
     if (val === cfg.mode[barId]) opt.selected = true;
@@ -210,9 +222,9 @@ function renderBar(barId, index, cfg) {
   modeRow.appendChild(modeSel);
   card.appendChild(modeRow);
 
-  // --- верх / center-блок (виден только в режиме center) - идёт ПЕРВЫМ,
-  // чтобы визуально совпадать с физическим расположением на ленте (верх
-  // сверху, низ снизу) ---
+  // --- верх / split-блок (виден только в режимах center/edges) - идёт
+  // ПЕРВЫМ, чтобы визуально совпадать с физическим расположением на ленте
+  // (верх сверху, низ снизу) ---
   const topBlock = document.createElement("div");
   topBlock.className = "half";
   topBlock.id = "top-block-" + barId;
@@ -225,7 +237,7 @@ function renderBar(barId, index, cfg) {
   topBlock.appendChild(solidCheckbox(barId, "Цвет на 100%", cfg.solid_top[barId], "/api/solid_top"));
   card.appendChild(topBlock);
 
-  // --- низ / classic-блок (всегда виден) ---
+  // --- низ / основной блок (всегда виден) ---
   const bottomBlock = document.createElement("div");
   const bottomTitle = document.createElement("div");
   bottomTitle.className = "half-title";
@@ -236,9 +248,16 @@ function renderBar(barId, index, cfg) {
   bottomBlock.appendChild(solidCheckbox(barId, "Цвет на 100%", cfg.solid[barId], "/api/solid"));
   card.appendChild(bottomBlock);
 
+  const BOTTOM_TITLES = {
+    classic: "",
+    classic_reverse: "",
+    center: "Нижняя половина",
+    edges: "Нижняя половина",
+  };
+
   function applyModeVisibility(mode) {
-    bottomTitle.textContent = mode === "center" ? "Нижняя половина" : "";
-    topBlock.style.display = mode === "center" ? "block" : "none";
+    bottomTitle.textContent = BOTTOM_TITLES[mode] || "";
+    topBlock.style.display = SPLIT_MODES.includes(mode) ? "block" : "none";
   }
   applyModeVisibility(cfg.mode[barId]);
 
